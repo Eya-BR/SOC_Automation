@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4-turbo-preview")
     
     # Vector Database
-    chroma_persist_directory: str = os.getenv("CHROMA_PERSIST_DIRECTORY", "./data/chroma")
-    vector_db_path: str = os.getenv("VECTOR_DB_PATH", "./data/vector_db")
+    chroma_persist_directory: str = os.getenv("CHROMA_PERSIST_DIRECTORY", os.path.join(os.getcwd(), "data", "chroma"))
+    vector_db_path: str = os.getenv("VECTOR_DB_PATH", os.path.join(os.getcwd(), "data", "vector_db"))
     
     # API Server
     api_host: str = os.getenv("API_HOST", "10.10.128.17")
@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     
     # Logging
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
-    log_file: str = os.getenv("LOG_FILE", "./logs/alert_enrichment.log")
+    log_file: str = os.getenv("LOG_FILE", os.path.join(os.getcwd(), "logs", "alert_enrichment.log"))
     
     # Threat Intelligence API Keys
     virustotal_api_key: Optional[str] = os.getenv("VIRUSTOTAL_API_KEY")
