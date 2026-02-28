@@ -41,9 +41,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Pydantic model
+# Pydantic model - accepts both formats
 class AlertRequest(BaseModel):
-    alert: Dict[str, Any]
+    alert: Dict[str, Any] = None
+    
+    class Config:
+        extra = "allow"  # Allow additional fields
 
 # Initialize advanced analyzer
 advanced_analyzer = AdvancedAnalyzer()
@@ -52,18 +55,29 @@ advanced_analyzer = AdvancedAnalyzer()
 async def analyze_alert(request: AlertRequest):
     """
     Advanced real-time alert analysis with ChromaDB RAG + VirusTotal + MITRE ATT&CK + Llama 3
+    Accepts both wrapped and raw Splunk alert formats
     """
     try:
-        alert_id = request.alert.get('_id', 'unknown')
+        # Handle both alert formats
+        if request.alert:
+            # Wrapped format: {"alert": {...}}
+            alert_data = request.alert
+        else:
+            # Raw format: direct Splunk alert fields
+            alert_data = request.dict(exclude_unset=True)
+        
+        # Extract alert ID for logging
+        alert_id = alert_data.get('sid', alert_data.get('_id', 'unknown'))
         logger.info(f"Starting advanced analysis for alert: {alert_id}")
         
         # Perform comprehensive analysis
-        analysis = advanced_analyzer.analyze_alert(request.alert)
+        analysis = advanced_analyzer.analyze_alert(alert_data)
         
         return {
             "success": True,
             "analysis": analysis,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
+            "alert_id": alert_id
         }
         
     except Exception as e:
