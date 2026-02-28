@@ -170,9 +170,14 @@ class AdvancedRAGSystem:
         """Process individual technique object"""
         try:
             # Extract technique ID from STIX ID
-            technique_id = obj.get('x_mitre_attack_spec_version', '').split('-')[-1]
+            technique_id = ""
+            stix_id = obj.get('id', '')
+            if stix_id and stix_id.startswith('attack-pattern--'):
+                # Use STIX ID as fallback
+                technique_id = stix_id
+            
+            # Try to extract from external_references
             if not technique_id:
-                # Try to extract from external_references
                 for ref in obj.get('external_references', []):
                     if ref.get('source_name') == 'mitre-attack':
                         url_parts = ref.get('url', '').split('/')
@@ -348,51 +353,76 @@ class AdvancedRAGSystem:
             all_results = []
             
             # Search security knowledge
-            security_results = self.collections["security_knowledge"].query(
-                query_embeddings=[query_embedding.tolist()],
-                n_results=max_results
-            )
+            try:
+                security_results = self.collections["security_knowledge"].query(
+                    query_embeddings=[query_embedding.tolist()],
+                    n_results=max_results
+                )
+                
+                # Process security knowledge results
+                if security_results and security_results.get('ids') and security_results['ids'][0]:
+                    for i in range(len(security_results['ids'][0])):
+                        all_results.append({
+                            'type': 'security_knowledge',
+                            'id': security_results['ids'][0][i],
+                            'document': security_results['documents'][0][i],
+                            'metadata': security_results['metadatas'][0][i],
+                            'distance': security_results['distances'][0][i],
+                            'similarity': 1 - security_results['distances'][0][i]
+                        })
+            except Exception as e:
+                logger.warning(f"Security knowledge query failed: {e}")
             
             # Search MITRE techniques
-            mitre_results = self.collections["mitre_techniques"].query(
-                query_embeddings=[query_embedding.tolist()],
-                n_results=max_results
-            )
+            try:
+                mitre_results = self.collections["mitre_techniques"].query(
+                    query_embeddings=[query_embedding.tolist()],
+                    n_results=max_results
+                )
+                
+                # Process MITRE results
+                if mitre_results and mitre_results.get('ids') and mitre_results['ids'][0]:
+                    for i in range(len(mitre_results['ids'][0])):
+                        all_results.append({
+                            'type': 'mitre_techniques',
+                            'id': mitre_results['ids'][0][i],
+                            'document': mitre_results['documents'][0][i],
+                            'metadata': mitre_results['metadatas'][0][i],
+                            'distance': mitre_results['distances'][0][i],
+                            'similarity': 1 - mitre_results['distances'][0][i]
+                        })
+            except Exception as e:
+                logger.warning(f"MITRE techniques query failed: {e}")
             
-            # Combine and rank results
-            all_results.extend([
-                {
-                    'type': 'security_knowledge',
-                    'id': result['ids'][0],
-                    'document': result['documents'][0],
-                    'metadata': result['metadatas'][0],
-                    'distance': result['distances'][0],
-                    'similarity': 1 - result['distances'][0]
-                }
-                for result in security_results['ids']
-            ])
-            
-            all_results.extend([
-                {
-                    'type': 'mitre_technique',
-                    'id': result['metadatas'][0]['id'],
-                    'document': result['documents'][0],
-                    'metadata': result['metadatas'][0],
-                    'distance': result['distances'][0],
-                    'similarity': 1 - result['distances'][0]
-                }
-                for result in mitre_results['ids']
-            ])
-            
-            # Sort by similarity (highest first)
+            # Sort by similarity and return top results
             all_results.sort(key=lambda x: x['similarity'], reverse=True)
             
-            logger.info(f"Retrieved {len(all_results)} relevant items from ChromaDB")
             return all_results[:max_results]
             
         except Exception as e:
             logger.error(f"Error retrieving context: {e}")
             return []
+    
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get RAG system statistics"""
+        try:
+            stats = {}
+            
+            for coll_name, collection in self.collections.items():
+                count = collection.count()
+                stats[coll_name] = {
+                    'item_count': count,
+                    'collection_name': coll_name
+                }
+            
+            stats['total_collections'] = len(self.collections)
+            stats['total_items'] = sum(coll['item_count'] for coll in stats.values())
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error getting statistics: {e}")
+            return {'error': str(e)}
     
     def add_knowledge(self, item: Dict[str, Any], collection: str = "security_knowledge"):
         """Add new knowledge item to ChromaDB"""

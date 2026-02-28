@@ -64,7 +64,7 @@ class AdvancedAnalyzer:
             
         except Exception as e:
             logger.error(f"Advanced analysis error: {e}")
-            return self._get_fallback_analysis(alert_data)
+            return self._get_smart_fallback_analysis(alert_data)
     
     def _extract_observables(self, alert_data: Dict[str, Any]) -> Dict[str, List[str]]:
         """Extract all observables from alert"""
@@ -422,39 +422,48 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
             return ""
     
     def _parse_llama3_response(self, response: str) -> Dict[str, Any]:
-        """Parse Llama 3 response"""
+        """Parse Llama 3 response with improved JSON handling"""
         try:
             # Clean response
             response = response.strip()
             
-            # Extract JSON if wrapped in markdown
-            if "```json" in response:
-                json_start = response.find("```json") + 7
-                json_end = response.find("```", json_start)
-                json_str = response[json_start:json_end].strip()
-            elif "```" in response:
-                json_start = response.find("```") + 3
-                json_end = response.rfind("```")
-                json_str = response[json_start:json_end].strip()
-            else:
+            # Try to extract JSON from response
+            if response.startswith('{') and response.endswith('}'):
                 json_str = response
+            else:
+                # Look for JSON in the response
+                start_idx = response.find('{')
+                end_idx = response.rfind('}')
+                
+                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                    json_str = response[start_idx:end_idx + 1]
+                else:
+                    logger.error("No JSON found in Llama 3 response")
+                    return self._get_fallback_llama3_analysis()
             
-            # Parse JSON
-            result = json.loads(json_str)
+            # Parse JSON with error handling
+            try:
+                parsed = json.loads(json_str)
+                return parsed
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parsing error: {e}")
+                logger.error(f"Response was: {json_str[:200]}...")
+                
+                # Try to fix common JSON issues
+                try:
+                    # Remove trailing commas
+                    json_str = json_str.replace(',\n}', '\n}').replace(',}', '}')
+                    json_str = json_str.replace(',\n]', '\n]').replace(',]', ']')
+                    
+                    parsed = json.loads(json_str)
+                    logger.info("JSON parsing succeeded after cleanup")
+                    return parsed
+                except:
+                    logger.error("JSON parsing failed even after cleanup")
+                    return self._get_fallback_llama3_analysis()
             
-            # Validate required fields
-            if not all(key in result for key in ["classification", "recommendations", "risk_assessment"]):
-                logger.warning("Response missing required fields, using fallback")
-                return self._get_fallback_llama3_analysis()
-            
-            return result
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing error: {e}")
-            logger.error(f"Response was: {response[:500]}...")
-            return self._get_fallback_llama3_analysis()
         except Exception as e:
-            logger.error(f"Error parsing response: {e}")
+            logger.error(f"Error parsing Llama 3 response: {e}")
             return self._get_fallback_llama3_analysis()
     
     def _get_fallback_llama3_analysis(self) -> Dict[str, Any]:
@@ -487,8 +496,8 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
             }
         }
     
-    def _generate_comprehensive_analysis(self, alert_data: Dict[str, Any], rag_context: List[Dict], 
-                                   vt_analysis: Dict, llama_analysis: Dict) -> Dict[str, Any]:
+    def _generate_comprehensive_analysis(self, alert_data: Dict[str, Any], observables: Dict[str, List[str]], 
+                                   rag_context: List[Dict], vt_analysis: Dict, llama_analysis: Dict) -> Dict[str, Any]:
         """Generate final comprehensive analysis"""
         
         # Calculate comprehensive threat score
@@ -743,6 +752,178 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
         
         return " | ".join(summary_parts)
     
+    def _get_smart_fallback_analysis(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Smart fallback analysis when Llama 3 is unavailable"""
+        try:
+            # Extract basic information
+            search_name = alert_data.get('search_name', 'Unknown Alert')
+            result = alert_data.get('result', {})
+            
+            # Extract observables
+            observables = self._extract_observables(alert_data)
+            
+            # Get RAG context
+            try:
+                rag_context = self.rag_system.retrieve_relevant_context(alert_data, max_results=3)
+                mitre_techniques = [ctx for ctx in rag_context if ctx.get('type') == 'mitre_techniques']
+            except:
+                rag_context = []
+                mitre_techniques = []
+            
+            # Smart classification based on alert content
+            alert_text = str(alert_data).lower()
+            
+            # Determine category
+            if any(keyword in alert_text for keyword in ['authentication', 'login', 'ntlm', 'credential']):
+                category = 'authentication'
+                severity = 'medium'
+            elif any(keyword in alert_text for keyword in ['privilege', 'escalation', 'admin', 'sudo']):
+                category = 'privilege_escalation'
+                severity = 'high'
+            elif any(keyword in alert_text for keyword in ['firewall', 'fortigate', 'network', 'anomaly']):
+                category = 'network_anomaly'
+                severity = 'medium'
+            elif any(keyword in alert_text for keyword in ['malware', 'virus', 'trojan']):
+                category = 'malware'
+                severity = 'high'
+            else:
+                category = 'unknown'
+                severity = 'medium'
+            
+            # Calculate threat score
+            threat_score = 0.3  # Base score
+            
+            if mitre_techniques:
+                threat_score += 0.2 * min(len(mitre_techniques), 3)
+            
+            if observables.get('ips'):
+                threat_score += 0.1 * min(len(observables['ips']), 3)
+            
+            if observables.get('users'):
+                threat_score += 0.1
+            
+            # Severity-based scoring
+            if severity == 'high':
+                threat_score += 0.3
+            elif severity == 'critical':
+                threat_score += 0.5
+            
+            threat_score = min(threat_score, 1.0)
+            
+            # Generate specific recommendations
+            recommendations = self._generate_specific_recommendations(
+                category, severity, observables, mitre_techniques
+            )
+            
+            return {
+                'alert_id': alert_data.get('sid', alert_data.get('_id', 'unknown')),
+                'analysis_timestamp': datetime.utcnow().isoformat(),
+                'threat_score': round(threat_score, 2),
+                'overall_severity': severity,
+                'status': 'smart_fallback',
+                'category': category,
+                'classification': {
+                    'category': category,
+                    'severity': severity,
+                    'confidence': 0.7,
+                    'threat_type': f'{category.replace("_", " ").title()} activity detected'
+                },
+                'observables': observables,
+                'mitre_context': mitre_techniques[:3],
+                'recommendations': recommendations,
+                'note': 'Smart fallback analysis - Llama 3 unavailable'
+            }
+            
+        except Exception as e:
+            logger.error(f"Smart fallback error: {e}")
+            return self._get_fallback_analysis(alert_data)
+    
+    def _generate_specific_recommendations(self, category: str, severity: str, 
+                                        observables: Dict, mitre_techniques: List) -> Dict[str, List[str]]:
+        """Generate specific recommendations based on alert type"""
+        
+        recommendations = {
+            'immediate_actions': [],
+            'investigation_steps': [],
+            'containment_strategies': [],
+            'prevention_measures': []
+        }
+        
+        if category == 'authentication':
+            recommendations['immediate_actions'].extend([
+                'Verify user identity and authentication context',
+                'Check for concurrent sessions from different locations'
+            ])
+            recommendations['investigation_steps'].extend([
+                'Review authentication logs for the affected user',
+                'Check account activity patterns',
+                'Verify if this is expected behavior for the user'
+            ])
+            recommendations['containment_strategies'].extend([
+                'Require multi-factor authentication if not already enabled',
+                'Monitor for additional suspicious authentication attempts'
+            ])
+            
+        elif category == 'privilege_escalation':
+            recommendations['immediate_actions'].extend([
+                'Verify if privilege escalation is authorized',
+                'Check user permissions and recent changes'
+            ])
+            recommendations['investigation_steps'].extend([
+                'Review privilege assignment logs',
+                'Check for unauthorized privilege changes',
+                'Analyze what actions were taken with elevated privileges'
+            ])
+            recommendations['containment_strategies'].extend([
+                'Temporarily restrict user privileges if suspicious',
+                'Enable enhanced monitoring on privileged accounts'
+            ])
+            
+        elif category == 'network_anomaly':
+            recommendations['immediate_actions'].extend([
+                'Verify network device status and configuration',
+                'Check for legitimate causes of traffic increase'
+            ])
+            recommendations['investigation_steps'].extend([
+                'Analyze traffic patterns and sources',
+                'Check for DDoS or scanning activities',
+                'Review firewall logs for the time period'
+            ])
+            recommendations['containment_strategies'].extend([
+                'Implement rate limiting if attack confirmed',
+                'Block suspicious IP addresses if identified'
+            ])
+        
+        # Add MITRE-specific recommendations
+        if mitre_techniques:
+            technique_names = [tech.get('metadata', {}).get('name', 'Unknown') for tech in mitre_techniques]
+            recommendations['investigation_steps'].append(
+                f'Investigate MITRE techniques: {", ".join(technique_names)}'
+            )
+        
+        # Add severity-based measures
+        if severity in ['high', 'critical']:
+            recommendations['immediate_actions'].insert(0, 'Escalate to security team immediately')
+            recommendations['containment_strategies'].insert(0, 'Consider temporary isolation if threat confirmed')
+        
+        # Default recommendations
+        if not recommendations['immediate_actions']:
+            recommendations['immediate_actions'].append('Review alert details and context')
+        
+        if not recommendations['investigation_steps']:
+            recommendations['investigation_steps'].extend([
+                'Review system logs',
+                'Check for related alerts'
+            ])
+        
+        if not recommendations['containment_strategies']:
+            recommendations['containment_strategies'].append('Monitor for additional suspicious activity')
+        
+        if not recommendations['prevention_measures']:
+            recommendations['prevention_measures'].append('Review and update security policies')
+        
+        return recommendations
+
     def _get_fallback_analysis(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
         """Fallback analysis when system fails"""
         return {
