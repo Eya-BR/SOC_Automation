@@ -762,30 +762,28 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
             # Extract observables
             observables = self._extract_observables(alert_data)
             
-            # Get RAG context
+            # Get RAG context (includes SOC reasoning)
             try:
-                rag_context = self.rag_system.retrieve_relevant_context(alert_data, max_results=3)
+                rag_context = self.rag_system.retrieve_relevant_context(alert_data, max_results=5)
                 mitre_techniques = [ctx for ctx in rag_context if ctx.get('type') == 'mitre_techniques']
+                soc_reasoning = [ctx for ctx in rag_context if ctx.get('type') == 'security_knowledge' and 'account' in ctx.get('document', '').lower()]
             except:
                 rag_context = []
                 mitre_techniques = []
+                soc_reasoning = []
             
-            # Smart classification based on alert content
+            # Basic classification based on alert content
             alert_text = str(alert_data).lower()
             
             # Determine category
             if any(keyword in alert_text for keyword in ['authentication', 'login', 'ntlm', 'credential']):
                 category = 'authentication'
-                severity = 'medium'
             elif any(keyword in alert_text for keyword in ['privilege', 'escalation', 'admin', 'sudo']):
                 category = 'privilege_escalation'
-                severity = 'high'
             elif any(keyword in alert_text for keyword in ['firewall', 'fortigate', 'network', 'anomaly']):
                 category = 'network_anomaly'
-                severity = 'medium'
             elif any(keyword in alert_text for keyword in ['malware', 'virus', 'trojan']):
                 category = 'malware'
-                severity = 'high'
             else:
                 category = 'unknown'
                 severity = 'medium'
@@ -799,21 +797,16 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
             if observables.get('ips'):
                 threat_score += 0.1 * min(len(observables['ips']), 3)
             
-            if observables.get('users'):
-                threat_score += 0.1
-            
             # Severity-based scoring
             if severity == 'high':
                 threat_score += 0.3
             elif severity == 'critical':
                 threat_score += 0.5
             
-            threat_score = min(threat_score, 1.0)
+            threat_score = max(0.1, min(threat_score, 1.0))
             
-            # Generate specific recommendations
-            recommendations = self._generate_specific_recommendations(
-                category, severity, observables, mitre_techniques
-            )
+            # Generate basic recommendations (let RAG provide detailed analysis)
+            recommendations = self._generate_basic_recommendations(category, severity)
             
             return {
                 'alert_id': alert_data.get('sid', alert_data.get('_id', 'unknown')),
@@ -830,13 +823,91 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
                 },
                 'observables': observables,
                 'mitre_context': mitre_techniques[:3],
+                'soc_reasoning': soc_reasoning[:2],  # Include SOC reasoning from RAG
                 'recommendations': recommendations,
-                'note': 'Smart fallback analysis - Llama 3 unavailable'
+                'note': 'Smart fallback analysis - Llama 3 unavailable. RAG context available for detailed analysis.'
             }
             
         except Exception as e:
             logger.error(f"Smart fallback error: {e}")
             return self._get_fallback_analysis(alert_data)
+    
+    def _generate_basic_recommendations(self, category: str, severity: str) -> Dict[str, List[str]]:
+        """Generate basic recommendations by category"""
+        recommendations = {
+            'immediate_actions': [],
+            'investigation_steps': [],
+            'containment_strategies': [],
+            'prevention_measures': []
+        }
+        
+        if category == 'authentication':
+            recommendations['immediate_actions'].extend([
+                'Verify user identity and authentication context',
+                'Check for concurrent sessions from different locations'
+            ])
+            recommendations['investigation_steps'].extend([
+                'Review authentication logs for affected user',
+                'Check account activity patterns',
+                'Verify if this is expected behavior for user'
+            ])
+            recommendations['containment_strategies'].extend([
+                'Require multi-factor authentication if not already enabled',
+                'Monitor for additional suspicious authentication attempts'
+            ])
+            
+        elif category == 'privilege_escalation':
+            recommendations['immediate_actions'].extend([
+                'Verify if privilege escalation is authorized',
+                'Check user permissions and recent changes'
+            ])
+            recommendations['investigation_steps'].extend([
+                'Review privilege assignment logs',
+                'Check for unauthorized privilege changes',
+                'Analyze what actions were taken with elevated privileges'
+            ])
+            recommendations['containment_strategies'].extend([
+                'Temporarily restrict user privileges if suspicious',
+                'Enable enhanced monitoring on privileged accounts'
+            ])
+            
+        elif category == 'network_anomaly':
+            recommendations['immediate_actions'].extend([
+                'Verify network device status and configuration',
+                'Check for legitimate causes of traffic increase'
+            ])
+            recommendations['investigation_steps'].extend([
+                'Analyze traffic patterns and sources',
+                'Check for DDoS or scanning activities',
+                'Review firewall logs for the time period'
+            ])
+            recommendations['containment_strategies'].extend([
+                'Implement rate limiting if attack confirmed',
+                'Block suspicious IP addresses if identified'
+            ])
+        
+        # Add severity-based measures
+        if severity in ['high', 'critical']:
+            recommendations['immediate_actions'].insert(0, 'Escalate to security team immediately')
+            recommendations['containment_strategies'].insert(0, 'Consider temporary isolation if threat confirmed')
+        
+        # Default recommendations
+        if not recommendations['immediate_actions']:
+            recommendations['immediate_actions'].append('Review alert details and context')
+        
+        if not recommendations['investigation_steps']:
+            recommendations['investigation_steps'].extend([
+                'Review system logs',
+                'Check for related alerts'
+            ])
+        
+        if not recommendations['containment_strategies']:
+            recommendations['containment_strategies'].append('Monitor for additional suspicious activity')
+        
+        if not recommendations['prevention_measures']:
+            recommendations['prevention_measures'].append('Review and update security policies')
+        
+        return recommendations
     
     def _generate_specific_recommendations(self, category: str, severity: str, 
                                         observables: Dict, mitre_techniques: List) -> Dict[str, List[str]]:

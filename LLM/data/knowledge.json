@@ -76,5 +76,17 @@
     "text": "Advanced Persistent Threats use sophisticated techniques, custom malware, and long-term access",
     "tags": ["apt", "advanced", "persistent", "sophisticated", "custom"],
     "category": "persistence"
+  },
+  {
+    "id": "account_type_detection",
+    "text": "Machine vs Human Account Detection: Machine accounts end with $ (AD01$, SVC_SQL$), human accounts have no suffix. Domain Controllers commonly use SeSecurityPrivilege. Check baseline behavior before threat classification. NEVER classify machine account activity as insider threat without validation.",
+    "tags": ["account", "detection", "machine", "human", "baseline", "false_positive"],
+    "category": "privilege_escalation"
+  },
+  {
+    "id": "false_positive_prevention",
+    "text": "False Positive Prevention: Validate account type, host role, baseline behavior, and authorization before classification. Common scenarios: DC operations, server maintenance, service accounts. Always document validation steps and decision rationale.",
+    "tags": ["false_positive", "prevention", "validation", "soc", "triage"],
+    "category": "privilege_escalation"
   }
 ]
