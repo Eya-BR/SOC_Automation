@@ -19,9 +19,9 @@ if __name__ == "__main__":
     print("🧠 RAG System: ChromaDB + SentenceTransformers")
     print("🦠 Threat Intel: VirusTotal + AbuseIPDB")
     print("🎯 LLM: Llama 3 (Local)")
-    print("📍 Server: http://10.10.128.17:8000")
-    print("🎯 Endpoint: http://10.10.128.17:8000/analyze")
-    print("📊 Health: http://10.10.128.17:8000/")
+    print("📍 Server: http://10.10.128.17:8001")
+    print("🎯 Endpoint: http://10.10.128.17:8001/analyze")
+    print("📊 Health: http://10.10.128.17:8001/")
     print("=" * 60)
     
     # Check API configuration
@@ -43,7 +43,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "src.llm_api:app",
         host="10.10.128.17",
-        port=8000,
+        port=8001,
         reload=True,
         log_level="info"
     )

@@ -22,9 +22,9 @@ class Settings(BaseSettings):
     chroma_persist_directory: str = os.getenv("CHROMA_PERSIST_DIRECTORY", os.path.join(os.getcwd(), "data", "chroma"))
     vector_db_path: str = os.getenv("VECTOR_DB_PATH", os.path.join(os.getcwd(), "data", "vector_db"))
     
-    # API Server
-    api_host: str = os.getenv("API_HOST", "10.10.128.17")
-    api_port: int = int(os.getenv("API_PORT", "8000"))
+    # API server configuration
+    API_HOST: str = Field(default="10.10.128.17", description="API server host")
+    API_PORT: int = Field(default=8001, description="API server port")
     
     # Logging
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
