@@ -724,7 +724,7 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
         
         if llama_analysis.get('classification', {}).get('threat_type'):
             summary_parts.append(
-                f"Llama 3: {llama_analysis.get('classification', {}).get('threat_type')}"
+                f"Llama 3: {llama_analysis['classification']['threat_type']}"
             )
         
         summary_parts.append(f"Overall threat score: {threat_score:.3f}")
@@ -742,15 +742,11 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
             observables = self._extract_observables(alert_data)
             
             # Get RAG context (includes SOC reasoning)
-            rag_context = []
-            mitre_techniques = []
-            soc_reasoning = []
             try:
                 rag_context = self.rag_system.retrieve_relevant_context(alert_data, max_results=5)
                 mitre_techniques = [ctx for ctx in rag_context if ctx.get('type') == 'mitre_techniques']
                 soc_reasoning = [ctx for ctx in rag_context if ctx.get('type') == 'security_knowledge' and 'account' in ctx.get('document', '').lower()]
-            except Exception as e:
-                logger.error(f"Error getting RAG context: {e}")
+            except:
                 rag_context = []
                 mitre_techniques = []
                 soc_reasoning = []
@@ -767,95 +763,94 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
                 category = 'malware'
             else:
                 category = 'unknown'
-        
-        # Generate recommendations based on category and RAG context
-        if category == 'authentication':
-            recommendations['immediate_actions'].extend([
-                'Verify user identity and authentication context',
-                'Check for concurrent sessions from different locations'
-            ])
-            recommendations['investigation_steps'].extend([
-                'Review authentication logs for affected user',
-                'Check account activity patterns',
-                'Verify if this is expected behavior for user'
-            ])
-        elif category == 'privilege_escalation':
-            recommendations['immediate_actions'].extend([
-                'Review privilege assignment and usage',
-                'Verify authorization for elevated access'
-            ])
-            recommendations['investigation_steps'].extend([
-                'Analyze privilege escalation logs',
-                'Check account permission changes',
-                'Review system access controls'
-            ])
-        elif category == 'malware':
-            recommendations['immediate_actions'].extend([
-                'Isolate affected system',
-                'Scan for malware signatures'
-            ])
-            recommendations['investigation_steps'].extend([
-                'Analyze malware behavior and artifacts',
-                'Check for persistence mechanisms',
-                'Review system logs for indicators'
-            ])
-            recommendations['containment_strategies'].extend([
-                'Require multi-factor authentication if not already enabled',
-                'Monitor for additional suspicious authentication attempts'
-            ])
             
-        elif category == 'privilege_escalation':
-            recommendations['immediate_actions'].extend([
-                'Verify if privilege escalation is authorized',
-                'Check user permissions and recent changes'
-            ])
-            recommendations['investigation_steps'].extend([
-                'Review privilege assignment logs',
-                'Check for unauthorized privilege changes',
-                'Analyze what actions were taken with elevated privileges'
-            ])
-            recommendations['containment_strategies'].extend([
-                'Temporarily restrict user privileges if suspicious',
-                'Enable enhanced monitoring on privileged accounts'
-            ])
+            # Generate basic recommendations
+            recommendations = {
+                'immediate_actions': ['Investigate alert manually'],
+                'investigation_steps': ['Review alert details'],
+                'containment_strategies': ['Monitor for suspicious activity'],
+                'prevention_measures': ['Update security policies']
+            }
             
-        elif category == 'network_anomaly':
-            recommendations['immediate_actions'].extend([
-                'Verify network device status and configuration',
-                'Check for legitimate causes of traffic increase'
-            ])
-            recommendations['investigation_steps'].extend([
-                'Analyze traffic patterns and sources',
-                'Check for DDoS or scanning activities',
-                'Review firewall logs for the time period'
-            ])
-            recommendations['containment_strategies'].extend([
-                'Implement rate limiting if attack confirmed',
-                'Block suspicious IP addresses if identified'
-            ])
+            if category == 'authentication':
+                recommendations['immediate_actions'].extend([
+                    'Verify user identity and authentication context',
+                    'Check for concurrent sessions from different locations'
+                ])
+                recommendations['investigation_steps'].extend([
+                    'Review authentication logs for affected user',
+                    'Check account activity patterns',
+                    'Verify if this is expected behavior for user'
+                ])
+            elif category == 'privilege_escalation':
+                recommendations['immediate_actions'].extend([
+                    'Review privilege assignment and justification',
+                    'Verify change management approval'
+                ])
+                recommendations['investigation_steps'].extend([
+                    'Analyze privilege escalation timeline',
+                    'Check for unauthorized privilege changes',
+                    'Review account permissions and roles'
+                ])
         
-        # Add severity-based measures
-        if severity in ['high', 'critical']:
-            recommendations['immediate_actions'].insert(0, 'Escalate to security team immediately')
-            recommendations['containment_strategies'].insert(0, 'Consider temporary isolation if threat confirmed')
-        
-        # Default recommendations
-        if not recommendations['immediate_actions']:
-            recommendations['immediate_actions'].append('Review alert details and context')
-        
-        if not recommendations['investigation_steps']:
-            recommendations['investigation_steps'].extend([
-                'Review system logs',
-                'Check for related alerts'
-            ])
-        
-        if not recommendations['containment_strategies']:
-            recommendations['containment_strategies'].append('Monitor for additional suspicious activity')
-        
-        if not recommendations['prevention_measures']:
-            recommendations['prevention_measures'].append('Review and update security policies')
-        
-        return recommendations
+            return {
+                "classification": {
+                    "category": category,
+                    "severity": "medium",
+                    "confidence": 0.6,
+                    "threat_type": f"{category.replace('_', ' ').title()} detected",
+                    "attack_patterns": [category],
+                    "mitre_techniques": []
+                },
+                "recommendations": recommendations,
+                "risk_assessment": {
+                    "business_impact": "medium",
+                    "technical_impact": "medium",
+                    "urgency": "medium",
+                    "attack_surface": self._calculate_attack_surface(observables)
+                },
+                "semantic_analysis": {
+                    "rag_matches": [ctx.get('document', '') for ctx in rag_context[:3]],
+                    "similarity_scores": {"RAG similarity": max([ctx.get('similarity', 0) for ctx in rag_context]) if rag_context else 0},
+                    "context_understanding": "Smart fallback analysis with RAG context"
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error in smart fallback: {e}")
+            return self._get_basic_fallback_analysis()
+    
+    def _get_basic_fallback_analysis(self) -> Dict[str, Any]:
+        """Basic fallback analysis when Llama 3 fails"""
+        return {
+            "classification": {
+                "category": "unknown",
+                "severity": "medium",
+                "confidence": 0.5,
+                "threat_type": "Unable to classify - Llama 3 unavailable",
+                "attack_patterns": [],
+                "mitre_techniques": []
+            },
+            "recommendations": {
+                "immediate_actions": ["Investigate alert manually", "Check system logs"],
+                "investigation_steps": ["Review alert details", "Analyze affected systems"],
+                "containment_strategies": ["Monitor for suspicious activity"],
+                "prevention_measures": ["Update security policies", "Enhance monitoring"]
+            },
+            "risk_assessment": {
+                "business_impact": "medium",
+                "technical_impact": "medium",
+                "urgency": "medium",
+                "attack_surface": "Unknown"
+            },
+            "semantic_analysis": {
+                "rag_matches": [],
+                "similarity_scores": {
+                    "Similarity with ChromaDB knowledge base": 0.0,
+                    "Similarity with VirusTotal threat intelligence": 0.0
+                },
+                "context_understanding": "Basic context analysis completed"
+            }
+        }
     
     def _generate_specific_recommendations(self, category: str, severity: str, 
                                         observables: Dict, mitre_techniques: List) -> Dict[str, List[str]]:
