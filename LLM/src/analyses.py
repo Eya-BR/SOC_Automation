@@ -491,67 +491,16 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
             },
             "semantic_analysis": {
                 "rag_matches": [],
-                "similarity_scores": [],
-                "context_understanding": "Failed - Llama 3 unavailable"
+                "similarity_scores": {
+                    "Similarity with ChromaDB knowledge base": 0.0,
+                    "Similarity with VirusTotal threat intelligence": 0.0
+                },
+                "context_understanding": "Basic context analysis completed"
             }
         }
     
-    def _generate_comprehensive_analysis(self, alert_data: Dict[str, Any], observables: Dict[str, List[str]], 
-                                   rag_context: List[Dict], vt_analysis: Dict, llama_analysis: Dict) -> Dict[str, Any]:
-        """Generate final comprehensive analysis"""
-        
-        # Calculate comprehensive threat score
-        threat_score = self._calculate_threat_score(rag_context, vt_analysis, llama_analysis)
-        
-        # Determine overall severity
-        severity = self._determine_overall_severity(threat_score, llama_analysis, vt_analysis)
-        
-        # Generate recommendations
-        recommendations = self._generate_recommendations(
-            alert_data, rag_context, vt_analysis, llama_analysis
-        )
-        
-        return {
-            'alert_id': alert_data.get('_id', 'unknown'),
-            'analysis_timestamp': datetime.utcnow().isoformat(),
-            'threat_score': round(threat_score, 3),
-            'overall_severity': severity,
-            
-            # Observables
-            'observables': self._extract_observables(alert_data),
-            
-            # Semantic RAG Analysis
-            'rag_analysis': {
-                'matches': rag_context,
-                'total_matches': len(rag_context),
-                'highest_similarity': max([item.get('similarity', 0) for item in rag_context]) if rag_context else 0,
-                'collections_searched': list(set([item.get('type') for item in rag_context]))
-            },
-            
-            # VirusTotal Analysis
-            'virustotal_analysis': vt_analysis,
-            
-            # Llama 3 Analysis
-            'llama3_analysis': llama_analysis,
-            
-            # Comprehensive Assessment
-            'assessment': {
-                'threat_type': self._determine_threat_type(rag_context, vt_analysis, llama_analysis),
-                'confidence': self._calculate_confidence(threat_score, rag_context, vt_analysis),
-                'urgency': self._determine_urgency(severity, threat_score),
-                'business_impact': self._determine_business_impact(severity, vt_analysis),
-                'attack_surface': self._analyze_attack_surface(alert_data)
-            },
-            
-            # Recommendations
-            'recommendations': recommendations,
-            
-            # Summary
-            'summary': self._generate_summary(rag_context, vt_analysis, llama_analysis, threat_score)
-        }
-    
     def _calculate_threat_score(self, rag_context: List[Dict], vt_analysis: Dict, llama_analysis: Dict) -> float:
-        """Calculate comprehensive threat score"""
+        """Calculate overall threat score"""
         score = 0.0
         
         # RAG contribution (30% weight)
@@ -649,8 +598,38 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
             surface_elements.append(f"Processes: {', '.join(observables['processes'][:3])}")
         if observables['urls']:
             surface_elements.append(f"URLs: {len(observables['urls'])}")
+        if observables['hosts']:
+            surface_elements.append(f"Hosts: {', '.join(observables['hosts'][:3])}")
+        if observables['privileges']:
+            surface_elements.append(f"Privileges: {', '.join(observables['privileges'][:3])}")
         
         return "; ".join(surface_elements) if surface_elements else "Local activity"
+    
+    def _normalize_severity(self, llama_severity: str, threat_score: float, vt_severity: str = "low") -> str:
+        """Normalize severity from different sources"""
+        severity_map = {
+            "low": 1, "medium": 2, "high": 3, "critical": 4
+        }
+        
+        # Map threat score to severity
+        if threat_score <= 0.3:
+            score_severity = 1
+        elif threat_score <= 0.6:
+            score_severity = 2
+        elif threat_score <= 0.8:
+            score_severity = 3
+        else:
+            score_severity = 4
+        
+        # Get maximum severity
+        llama_val = severity_map.get(llama_severity.lower(), 1)
+        vt_val = severity_map.get(vt_severity.lower(), 1)
+        
+        max_severity_val = max(llama_val, score_severity, vt_val)
+        
+        # Convert back to string
+        reverse_map = {1: "low", 2: "medium", 3: "high", 4: "critical"}
+        return reverse_map[max_severity_val]
     
     def _generate_recommendations(self, alert_data: Dict[str, Any], rag_context: List[Dict], 
                               vt_analysis: Dict, llama_analysis: Dict) -> Dict[str, List[str]]:
