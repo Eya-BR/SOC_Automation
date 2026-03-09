@@ -1,13 +1,13 @@
-# Senior SOC Analyst Framework
+# SOC Analyst Framework
 
-## 🎯 Professional SOC Analysis Methodology
+## 🎯 Analytic Principles
 
 ### **Core Analytic Principles**
 
 #### **1. Assume Innocent Until Proven Guilty**
 - **Default Position**: Most alerts are legitimate business operations
 - **Burden of Proof**: Must prove malicious intent, not assume it
-- **Context First**: Understand the environment before classification
+- **Context First**: Understand environment before classification
 - **Baseline Validation**: Compare against normal operational patterns
 
 #### **2. False Positive First Mentality**

@@ -78,6 +78,24 @@
     "category": "persistence"
   },
   {
+    "id": "soc_analytic_framework",
+    "text": "SOC Analyst Framework: Assume innocent until proven guilty. False positive first mentality. Account type intelligence: Machine accounts ($ suffix) usually legitimate, Domain Controllers expected to use high privileges. Only escalate if ALL conditions met: human account + suspicious behavior + no authorization + baseline deviation. Document uncertainty and confidence levels.",
+    "tags": ["soc", "analyst", "framework", "false_positive", "context", "baseline"],
+    "category": "privilege_escalation"
+  },
+  {
+    "id": "enterprise_context_analysis",
+    "text": "Enterprise Context Analysis: Domain Controller normal behavior includes SeSecurityPrivilege, Event IDs 4672-4674. Service accounts perform legitimate automated operations. Business operations include maintenance windows, change management, seasonal patterns. Professional triage: Rapid context assessment → Quick validation → Detailed analysis → Decision making with business impact consideration.",
+    "tags": ["enterprise", "context", "business", "operations", "triage", "risk"],
+    "category": "privilege_escalation"
+  },
+  {
+    "id": "domain_controller_baseline",
+    "text": "Domain Controller Baseline Operations: SeSecurityPrivilege is standard for DC auditing and log management. Machine accounts end with $. Event IDs 4672-4674 are normal DC operations. DC machine account with SeSecurityPrivilege is likely benign - document as expected behavior. Never revoke DC privileges without validation.",
+    "tags": ["domain", "controller", "baseline", "sesecurityprivilege", "machine", "account", "benign"],
+    "category": "privilege_escalation"
+  },
+  {
     "id": "account_type_detection",
     "text": "Machine vs Human Account Detection: Machine accounts end with $ (AD01$, SVC_SQL$), human accounts have no suffix. Domain Controllers commonly use SeSecurityPrivilege. Check baseline behavior before threat classification. NEVER classify machine account activity as insider threat without validation.",
     "tags": ["account", "detection", "machine", "human", "baseline", "false_positive"],
@@ -85,8 +103,8 @@
   },
   {
     "id": "false_positive_prevention",
-    "text": "False Positive Prevention: Validate account type, host role, baseline behavior, and authorization before classification. Common scenarios: DC operations, server maintenance, service accounts. Always document validation steps and decision rationale.",
-    "tags": ["false_positive", "prevention", "validation", "soc", "triage"],
+    "text": "False Positive Prevention: Validate account type, host role, baseline behavior, and authorization before classification. Common scenarios: DC operations (Event 4672-4674), server maintenance, service accounts, backup operations. Always document validation steps and decision rationale. Consider business impact of false positives.",
+    "tags": ["false_positive", "prevention", "validation", "soc", "triage", "business"],
     "category": "privilege_escalation"
   }
 ]

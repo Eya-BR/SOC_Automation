@@ -97,17 +97,22 @@ class AdvancedRAGSystem:
     def _load_mitre_techniques(self):
         """Load MITRE ATT&CK techniques directly from GitHub"""
         try:
-            # Fetch directly from MITRE ATT&CK GitHub repository
             techniques_url = "https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json"
             response = requests.get(techniques_url, timeout=30)
             response.raise_for_status()
             
             data = response.json()
+            
+            # Ensure data is a list
+            if not isinstance(data, list):
+                logger.error("MITRE data is not in expected list format")
+                return
+            
             techniques = []
             
             # Process techniques
             for obj in data:
-                if obj.get('type') == 'attack-pattern' and obj.get('id', '').startswith('attack-pattern--'):
+                if isinstance(obj, dict) and obj.get('type') == 'attack-pattern' and obj.get('id', '').startswith('attack-pattern--'):
                     technique = self._process_technique(obj)
                     if technique:
                         techniques.append(technique)
@@ -137,12 +142,12 @@ class AdvancedRAGSystem:
                     }]
                 )
             
-            logger.info(f"Successfully loaded {len(techniques)} MITRE techniques into ChromaDB")
+            logger.info(f"Added {len(techniques)} MITRE techniques to ChromaDB")
             
-        except requests.RequestException as e:
-            logger.error(f"Network error fetching MITRE data: {e}")
         except Exception as e:
             logger.error(f"Error loading MITRE techniques: {e}")
+            import traceback
+            logger.error(f"MITRE loading error traceback: {traceback.format_exc()}")
     
     def reload_mitre_techniques(self):
         """Reload MITRE techniques from GitHub (hot reload)"""
@@ -335,7 +340,7 @@ class AdvancedRAGSystem:
     
     def retrieve_relevant_context(self, alert_data: Dict[str, Any], max_results: int = 5) -> List[Dict[str, Any]]:
         """
-        Retrieve relevant context using semantic search
+        Retrieve relevant context using semantic search with domain filtering
         
         Args:
             alert_data: Security alert to analyze
@@ -349,27 +354,36 @@ class AdvancedRAGSystem:
             alert_text = str(alert_data)
             query_embedding = self.model.encode(alert_text)
             
+            # Detect alert domain for filtering
+            alert_domain = self._detect_alert_domain(alert_text)
+            
             # Search all collections
             all_results = []
             
-            # Search security knowledge
+            # Search security knowledge with domain filtering
             try:
                 security_results = self.collections["security_knowledge"].query(
                     query_embeddings=[query_embedding.tolist()],
-                    n_results=max_results
+                    n_results=max_results * 2  # Get more to filter
                 )
                 
-                # Process security knowledge results
+                # Process and filter security knowledge results
                 if security_results and security_results.get('ids') and security_results['ids'][0]:
                     for i in range(len(security_results['ids'][0])):
-                        all_results.append({
-                            'type': 'security_knowledge',
-                            'id': security_results['ids'][0][i],
-                            'document': security_results['documents'][0][i],
-                            'metadata': security_results['metadatas'][0][i],
-                            'distance': security_results['distances'][0][i],
-                            'similarity': 1 - security_results['distances'][0][i]
-                        })
+                        result_doc = security_results['documents'][0][i].lower()
+                        result_metadata = security_results['metadatas'][0][i]
+                        
+                        # Domain-specific filtering
+                        if self._is_domain_relevant(result_doc, result_metadata, alert_domain):
+                            all_results.append({
+                                'type': 'security_knowledge',
+                                'id': security_results['ids'][0][i],
+                                'document': security_results['documents'][0][i],
+                                'metadata': security_results['metadatas'][0][i],
+                                'distance': security_results['distances'][0][i],
+                                'similarity': 1 - security_results['distances'][0][i],
+                                'domain': alert_domain
+                            })
             except Exception as e:
                 logger.warning(f"Security knowledge query failed: {e}")
             
@@ -389,7 +403,8 @@ class AdvancedRAGSystem:
                             'document': mitre_results['documents'][0][i],
                             'metadata': mitre_results['metadatas'][0][i],
                             'distance': mitre_results['distances'][0][i],
-                            'similarity': 1 - mitre_results['distances'][0][i]
+                            'similarity': 1 - mitre_results['distances'][0][i],
+                            'domain': alert_domain
                         })
             except Exception as e:
                 logger.warning(f"MITRE techniques query failed: {e}")
@@ -402,6 +417,69 @@ class AdvancedRAGSystem:
         except Exception as e:
             logger.error(f"Error retrieving context: {e}")
             return []
+    
+    def _detect_alert_domain(self, alert_text: str) -> str:
+        """Detect the security domain of the alert"""
+        alert_text_lower = alert_text.lower()
+        
+        # Active Directory indicators
+        if any(keyword in alert_text_lower for keyword in ['active directory', 'privilege escalation', 'sebackupprivilege', 'sesecurityprivilege', 'domain controller', 'ad01$', 'dc01$', 'kerberos', 'ldap']):
+            return 'active_directory'
+        
+        # Network security indicators
+        elif any(keyword in alert_text_lower for keyword in ['firewall', 'fortigate', 'network', 'anomaly', 'traffic', 'port scan', 'ddos']):
+            return 'network_security'
+        
+        # Malware indicators
+        elif any(keyword in alert_text_lower for keyword in ['malware', 'virus', 'trojan', 'emotet', 'trickbot', 'wannacry']):
+            return 'malware'
+        
+        # Phishing indicators
+        elif any(keyword in alert_text_lower for keyword in ['phishing', 'email', 'attachment', 'suspicious link']):
+            return 'phishing'
+        
+        # Web security indicators
+        elif any(keyword in alert_text_lower for keyword in ['sql injection', 'xss', 'csrf', 'web attack']):
+            return 'web_security'
+        
+        # Default
+        else:
+            return 'general_security'
+    
+    def _is_domain_relevant(self, document: str, metadata: Dict, alert_domain: str) -> bool:
+        """Check if a document is relevant to the detected alert domain"""
+        doc_lower = document.lower()
+        tags = metadata.get('tags', [])
+        category = metadata.get('category', '').lower()
+        
+        # Active Directory domain filtering
+        if alert_domain == 'active_directory':
+            ad_keywords = ['active directory', 'privilege', 'account', 'domain controller', 'machine account', 'baseline', 'false positive', 'senior analyst', 'enterprise context']
+            return any(keyword in doc_lower for keyword in ad_keywords) or any(keyword in ' '.join(tags).lower() for keyword in ad_keywords)
+        
+        # Network security domain filtering
+        elif alert_domain == 'network_security':
+            net_keywords = ['network', 'firewall', 'anomaly', 'traffic', 'ddos', 'port scan']
+            return any(keyword in doc_lower for keyword in net_keywords) or category == 'network_security'
+        
+        # Malware domain filtering
+        elif alert_domain == 'malware':
+            malware_keywords = ['malware', 'virus', 'trojan', 'emotet', 'trickbot']
+            return any(keyword in doc_lower for keyword in malware_keywords) or category == 'malware'
+        
+        # Phishing domain filtering
+        elif alert_domain == 'phishing':
+            phishing_keywords = ['phishing', 'email', 'attachment', 'link']
+            return any(keyword in doc_lower for keyword in phishing_keywords) or category == 'initial_access'
+        
+        # Web security domain filtering
+        elif alert_domain == 'web_security':
+            web_keywords = ['web', 'sql', 'injection', 'xss', 'csrf']
+            return any(keyword in doc_lower for keyword in web_keywords) or category == 'initial_access'
+        
+        # General security - include most things
+        else:
+            return True
     
     def get_statistics(self) -> Dict[str, Any]:
         """Get RAG system statistics"""
