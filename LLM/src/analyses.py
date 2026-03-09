@@ -724,7 +724,7 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
         
         if llama_analysis.get('classification', {}).get('threat_type'):
             summary_parts.append(
-                f"Llama 3: {llama_analysis['classification']['threat_type']}"
+                f"Llama 3: {llama_analysis.get('classification', {}).get('threat_type')}"
             )
         
         summary_parts.append(f"Overall threat score: {threat_score:.3f}")
@@ -742,11 +742,15 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
             observables = self._extract_observables(alert_data)
             
             # Get RAG context (includes SOC reasoning)
+            rag_context = []
+            mitre_techniques = []
+            soc_reasoning = []
             try:
                 rag_context = self.rag_system.retrieve_relevant_context(alert_data, max_results=5)
                 mitre_techniques = [ctx for ctx in rag_context if ctx.get('type') == 'mitre_techniques']
                 soc_reasoning = [ctx for ctx in rag_context if ctx.get('type') == 'security_knowledge' and 'account' in ctx.get('document', '').lower()]
-            except:
+            except Exception as e:
+                logger.error(f"Error getting RAG context: {e}")
                 rag_context = []
                 mitre_techniques = []
                 soc_reasoning = []
@@ -759,67 +763,12 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
                 category = 'authentication'
             elif any(keyword in alert_text for keyword in ['privilege', 'escalation', 'admin', 'sudo']):
                 category = 'privilege_escalation'
-            elif any(keyword in alert_text for keyword in ['firewall', 'fortigate', 'network', 'anomaly']):
-                category = 'network_anomaly'
             elif any(keyword in alert_text for keyword in ['malware', 'virus', 'trojan']):
                 category = 'malware'
             else:
                 category = 'unknown'
-                severity = 'medium'
-            
-            # Calculate threat score
-            threat_score = 0.3  # Base score
-            
-            if mitre_techniques:
-                threat_score += 0.2 * min(len(mitre_techniques), 3)
-            
-            if observables.get('ips'):
-                threat_score += 0.1 * min(len(observables['ips']), 3)
-            
-            # Severity-based scoring
-            if severity == 'high':
-                threat_score += 0.3
-            elif severity == 'critical':
-                threat_score += 0.5
-            
-            threat_score = max(0.1, min(threat_score, 1.0))
-            
-            # Generate basic recommendations (let RAG provide detailed analysis)
-            recommendations = self._generate_basic_recommendations(category, severity)
-            
-            return {
-                'alert_id': alert_data.get('sid', alert_data.get('_id', 'unknown')),
-                'analysis_timestamp': datetime.utcnow().isoformat(),
-                'threat_score': round(threat_score, 2),
-                'overall_severity': severity,
-                'status': 'smart_fallback',
-                'category': category,
-                'classification': {
-                    'category': category,
-                    'severity': severity,
-                    'confidence': 0.7,
-                    'threat_type': f'{category.replace("_", " ").title()} activity detected'
-                },
-                'observables': observables,
-                'mitre_context': mitre_techniques[:3],
-                'soc_reasoning': soc_reasoning[:2],  # Include SOC reasoning from RAG
-                'recommendations': recommendations,
-                'note': 'Smart fallback analysis - Llama 3 unavailable. RAG context available for detailed analysis.'
-            }
-            
-        except Exception as e:
-            logger.error(f"Smart fallback error: {e}")
-            return self._get_fallback_analysis(alert_data)
-    
-    def _generate_basic_recommendations(self, category: str, severity: str) -> Dict[str, List[str]]:
-        """Generate basic recommendations by category"""
-        recommendations = {
-            'immediate_actions': [],
-            'investigation_steps': [],
-            'containment_strategies': [],
-            'prevention_measures': []
-        }
         
+        # Generate recommendations based on category and RAG context
         if category == 'authentication':
             recommendations['immediate_actions'].extend([
                 'Verify user identity and authentication context',
@@ -829,6 +778,26 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
                 'Review authentication logs for affected user',
                 'Check account activity patterns',
                 'Verify if this is expected behavior for user'
+            ])
+        elif category == 'privilege_escalation':
+            recommendations['immediate_actions'].extend([
+                'Review privilege assignment and usage',
+                'Verify authorization for elevated access'
+            ])
+            recommendations['investigation_steps'].extend([
+                'Analyze privilege escalation logs',
+                'Check account permission changes',
+                'Review system access controls'
+            ])
+        elif category == 'malware':
+            recommendations['immediate_actions'].extend([
+                'Isolate affected system',
+                'Scan for malware signatures'
+            ])
+            recommendations['investigation_steps'].extend([
+                'Analyze malware behavior and artifacts',
+                'Check for persistence mechanisms',
+                'Review system logs for indicators'
             ])
             recommendations['containment_strategies'].extend([
                 'Require multi-factor authentication if not already enabled',
