@@ -12,7 +12,7 @@ import logging
 from datetime import datetime
 
 from .config import settings
-from .analyses import AdvancedAnalyzer
+from .analyze import CleanAnalyzer
 
 # Setup logging
 logging.basicConfig(
@@ -48,8 +48,8 @@ class AlertRequest(BaseModel):
     class Config:
         extra = "allow"  # Allow additional fields
 
-# Initialize advanced analyzer
-advanced_analyzer = AdvancedAnalyzer()
+# Initialize clean analyzer
+advanced_analyzer = CleanAnalyzer()
 
 @app.post("/analyze")
 async def analyze_alert(request: AlertRequest):

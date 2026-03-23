@@ -518,203 +518,56 @@ class AdvancedAnalyzer:
         except Exception as e:
             logger.error(f"VirusTotal hash check error: {e}")
         
-        def _detect_account_type(self, alert_data: Dict[str, Any]) -> str:
-        """Detect if account is machine, human, or service"""
+        def _analyze_with_llama_context_aware(self, alert_data: Dict[str, Any], rag_context: List[Dict]) -> Dict[str, Any]:
+        """Context-aware Llama 3 analysis that avoids hallucinations"""
         try:
+            # Extract key context
             user = alert_data.get("result", {}).get("user", "")
-            if user.endswith("$"):
-                return "machine_account"
-            elif user.lower().startswith(("svc_", "service_", "mssql_", "iis_")):
-                return "service_account"
+            host = alert_data.get("result", {}).get("host", "")
+            privilege = alert_data.get("result", {}).get("Privileges", "")
+            account_type = self._detect_account_type(alert_data)
+            
+            # Build context-aware prompt
+            prompt = f"""Analyze this security alert with STRICT evidence requirements:
+
+Alert Details:
+- User: {user} ({account_type})
+- Host: {host}
+- Privilege: {privilege}
+- Alert: {alert_data.get('search_name', 'Unknown')}
+
+CRITICAL EVIDENCE RULES:
+1. ONLY use facts from alert - NO assumptions beyond provided data
+2. NEVER assume "attacker", "vulnerability", or "exploit" unless explicitly stated
+3. Machine accounts (ending with $) are legitimate system accounts
+4. SeSecurityPrivilege is used for legitimate system operations
+5. If evidence is insufficient, state uncertainty and possible benign explanations
+6. MITRE techniques: Do NOT generate - use "unknown" only
+
+Account Type Rules:
+- Machine accounts (ending with $) = legitimate system behavior
+- Domain Controllers (AD01) = expected elevated privileges
+- SeSecurityPrivilege = used for auditing and log management
+
+Required JSON format:
+{{
+    "hypothesis": "Statement based ONLY on provided evidence",
+    "confidence": 0.0-1.0,
+    "evidence_available": true/false,
+    "context_factors": ["observable factors only"],
+    "legitimate_explanations": ["possible benign reasons"],
+    "suspicious_indicators": ["indicators based on evidence"],
+    "requires_investigation": true/false,
+    "mitre_techniques": ["unknown"]
+}}
+
+RESPOND ONLY WITH VALID JSON. NO EXPLANATIONS."""
+            
+            response = self._call_llama3(prompt)
+            if response:
+                return self._parse_contextual_response(response, alert_data)
             else:
-                return "human_account"
-        except Exception as e:
-            logger.error(f"Error detecting account type: {e}")
-            return "unknown"
-    
-    def _determine_threat_type(self, rag_context: List[Dict], vt_analysis: Dict, llama_analysis: Dict) -> str:
-        """Determine threat type"""
-        # Check Llama 3 classification
-        if llama_analysis.get('classification', {}).get('threat_type'):
-            return llama_analysis['classification']['threat_type']
-        
-        # Check RAG context
-        if rag_context:
-            mitre_matches = [item for item in rag_context if item.get('type') == 'mitre_technique']
-            if mitre_matches:
-                top_match = mitre_matches[0]
-                return f"MITRE ATT&CK: {top_match['metadata'].get('tactic', 'Unknown')} - {top_match['metadata'].get('name', 'Unknown')}"
-        
-        # Check VirusTotal
-        if vt_analysis.get('malicious_count', 0) > 0:
-            return "Malicious indicators detected"
-        
-        return "Suspicious activity detected"
-    
-    def _calculate_confidence(self, threat_score: float, rag_context: List[Dict], vt_analysis: Dict) -> float:
-        """Calculate confidence in analysis"""
-        confidence = threat_score
-        
-        # Boost confidence if multiple sources agree
-        sources_confident = 0
-        if rag_context:
-            sources_confident += 0.3
-        if vt_analysis.get('malicious_count', 0) > 0:
-            sources_confident += 0.4
-        
-        return min(confidence + sources_confident * 0.1, 1.0)
-    
-    def _determine_urgency(self, severity: str, threat_score: float) -> str:
-        """Determine urgency level"""
-        if severity == 'critical':
-            return 'immediate'
-        elif severity == 'high':
-            return 'high'
-        elif severity == 'medium':
-            return 'medium'
-        else:
-            return 'low'
-    
-    def _determine_business_impact(self, severity: str, vt_analysis: Dict) -> str:
-        """Determine business impact"""
-        if severity == 'critical' or vt_analysis.get('malicious_count', 0) > 2:
-            return 'critical'
-        elif severity == 'high' or vt_analysis.get('malicious_count', 0) > 0:
-            return 'high'
-        elif severity == 'medium':
-            return 'medium'
-        else:
-            return 'low'
-    
-    def _analyze_attack_surface(self, alert_data: Dict[str, Any]) -> str:
-        """Analyze attack surface"""
-        observables = self._extract_observables(alert_data)
-        
-        surface_elements = []
-        if observables['ips']:
-            surface_elements.append(f"External IPs: {len(observables['ips'])}")
-        if observables['domains']:
-            surface_elements.append(f"External domains: {len(observables['domains'])}")
-        if observables['processes']:
-            surface_elements.append(f"Processes: {', '.join(observables['processes'][:3])}")
-        if observables['urls']:
-            surface_elements.append(f"URLs: {len(observables['urls'])}")
-        if observables['hosts']:
-            surface_elements.append(f"Hosts: {', '.join(observables['hosts'][:3])}")
-        if observables['privileges']:
-            surface_elements.append(f"Privileges: {', '.join(observables['privileges'][:3])}")
-        
-        return "; ".join(surface_elements) if surface_elements else "Local activity"
-    
-    def _normalize_severity(self, llama_severity: str, threat_score: float, vt_severity: str = "low") -> str:
-        """Normalize severity from different sources"""
-        severity_map = {
-            "low": 1, "medium": 2, "high": 3, "critical": 4
-        }
-        
-        # Map threat score to severity
-        if threat_score <= 0.3:
-            score_severity = 1
-        elif threat_score <= 0.6:
-            score_severity = 2
-        elif threat_score <= 0.8:
-            score_severity = 3
-        else:
-            score_severity = 4
-        
-        # Get maximum severity
-        llama_val = severity_map.get(llama_severity.lower(), 1)
-        vt_val = severity_map.get(vt_severity.lower(), 1)
-        
-        max_severity_val = max(llama_val, score_severity, vt_val)
-        
-        # Convert back to string
-        reverse_map = {1: "low", 2: "medium", 3: "high", 4: "critical"}
-        return reverse_map[max_severity_val]
-    
-    def _generate_recommendations(self, alert_data: Dict[str, Any], rag_context: List[Dict], 
-                              vt_analysis: Dict, llama_analysis: Dict) -> Dict[str, List[str]]:
-        """Generate specific recommendations"""
-        recommendations = {
-            'immediate_actions': [],
-            'investigation_steps': [],
-            'containment_strategies': [],
-            'prevention_measures': []
-        }
-        
-        # RAG-based recommendations
-        if rag_context:
-            mitre_matches = [item for item in rag_context if item.get('type') == 'mitre_technique']
-            if mitre_matches:
-                top_match = mitre_matches[0]
-                tactic = top_match['metadata'].get('tactic', '').lower()
-                
-                if 'initial access' in tactic:
-                    recommendations['immediate_actions'].extend([
-                        "Block source IPs/domains immediately",
-                        "Review authentication logs",
-                        "Enable multi-factor authentication"
-                    ])
-                    recommendations['prevention_measures'].extend([
-                        "Implement email security filters",
-                        "Conduct security awareness training",
-                        "Deploy endpoint protection"
-                    ])
-                
-                elif 'execution' in tactic:
-                    recommendations['immediate_actions'].extend([
-                        "Isolate affected systems",
-                        "Review process execution logs",
-                        "Check for persistence mechanisms"
-                    ])
-                    recommendations['containment_strategies'].extend([
-                        "Disable suspicious scheduled tasks",
-                        "Block command execution for non-admins"
-                    ])
-                
-                elif 'credential access' in tactic:
-                    recommendations['immediate_actions'].extend([
-                        "Force password resets",
-                        "Review account access logs",
-                        "Enable account lockouts"
-                    ])
-                    recommendations['investigation_steps'].extend([
-                        "Check for credential dumping tools",
-                        "Review LSASS access patterns"
-                    ])
-        
-        # VirusTotal-based recommendations
-        if vt_analysis.get('malicious_count', 0) > 0:
-            recommendations['immediate_actions'].extend([
-                "Quarantine malicious files",
-                "Block malicious IPs/domains",
-                "Scan affected systems"
-            ])
-            recommendations['containment_strategies'].extend([
-                "Implement network segmentation",
-                "Deploy IDS/IPS rules"
-            ])
-        
-        # Llama 3 recommendations
-        if llama_analysis.get('recommendations'):
-            llama_recs = llama_analysis['recommendations']
-            for key in recommendations:
-                if key in llama_recs:
-                    recommendations[key].extend(llama_recs[key])
-        
-        # Remove duplicates
-        for key in recommendations:
-            recommendations[key] = list(set(recommendations[key]))
-        
-        return recommendations
-    
-    def _generate_summary(self, rag_context: List[Dict], vt_analysis: Dict, 
-                        llama_analysis: Dict, threat_score: float) -> str:
-        """Generate analysis summary"""
-        summary_parts = []
-        
-        if rag_context:
-            summary_parts.append(
+                def _parse_contextual_response(self, response: str, alert_data: Dict[str, Any]) -> Dict[str, Any]:
                 f"Semantic RAG: {len(rag_context)} matches (highest similarity: {max([item.get('similarity', 0) for item in rag_context]):.3f})"
             )
         
@@ -731,127 +584,6 @@ class AdvancedAnalyzer:
         summary_parts.append(f"Overall threat score: {threat_score:.3f}")
         
         return " | ".join(summary_parts)
-    
-    def _get_smart_fallback_analysis(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Smart fallback analysis when Llama 3 is unavailable"""
-        try:
-            # Extract basic information
-            search_name = alert_data.get('search_name', 'Unknown Alert')
-            result = alert_data.get('result', {})
-            
-            # Extract observables
-            observables = self._extract_observables(alert_data)
-            
-            # Get RAG context (includes SOC reasoning)
-            try:
-                rag_context = self.rag_system.retrieve_relevant_context(alert_data, max_results=5)
-                mitre_techniques = [ctx for ctx in rag_context if ctx.get('type') == 'mitre_techniques']
-                soc_reasoning = [ctx for ctx in rag_context if ctx.get('type') == 'security_knowledge' and 'account' in ctx.get('document', '').lower()]
-            except:
-                rag_context = []
-                mitre_techniques = []
-                soc_reasoning = []
-            
-            # Basic classification based on alert content
-            alert_text = str(alert_data).lower()
-            
-            # Determine category
-            if any(keyword in alert_text for keyword in ['authentication', 'login', 'ntlm', 'credential']):
-                category = 'authentication'
-            elif any(keyword in alert_text for keyword in ['privilege', 'escalation', 'admin', 'sudo']):
-                category = 'privilege_escalation'
-            elif any(keyword in alert_text for keyword in ['malware', 'virus', 'trojan']):
-                category = 'malware'
-            else:
-                category = 'unknown'
-            
-            # Generate basic recommendations
-            recommendations = {
-                'immediate_actions': ['Investigate alert manually'],
-                'investigation_steps': ['Review alert details'],
-                'containment_strategies': ['Monitor for suspicious activity'],
-                'prevention_measures': ['Update security policies']
-            }
-            
-            if category == 'authentication':
-                recommendations['immediate_actions'].extend([
-                    'Verify user identity and authentication context',
-                    'Check for concurrent sessions from different locations'
-                ])
-                recommendations['investigation_steps'].extend([
-                    'Review authentication logs for the affected user',
-                    'Check account activity patterns',
-                    'Verify if this is expected behavior for the user'
-                ])
-            elif category == 'privilege_escalation':
-                recommendations['immediate_actions'].extend([
-                    'Verify if privilege escalation is authorized',
-                    'Check user permissions and recent changes'
-                ])
-                recommendations['investigation_steps'].extend([
-                    'Review privilege assignment logs',
-                    'Check for unauthorized privilege changes',
-                    'Analyze what actions were taken with elevated privileges'
-                ])
-            
-            return {
-                "classification": {
-                    "category": category,
-                    "severity": "medium",
-                    "confidence": 0.6,
-                    "threat_type": f"{category.replace('_', ' ').title()} detected",
-                    "attack_patterns": [category],
-                    "mitre_techniques": []
-                },
-                "recommendations": recommendations,
-                "risk_assessment": {
-                    "business_impact": "medium",
-                    "technical_impact": "medium",
-                    "urgency": "medium",
-                    "attack_surface": self._calculate_attack_surface(observables)
-                },
-                "semantic_analysis": {
-                    "rag_matches": [ctx.get('document', '') for ctx in rag_context[:3]],
-                    "similarity_scores": {"RAG similarity": max([ctx.get('similarity', 0) for ctx in rag_context]) if rag_context else 0},
-                    "context_understanding": "Smart fallback analysis with RAG context"
-                }
-            }
-        except Exception as e:
-            logger.error(f"Error in smart fallback: {e}")
-            return self._get_basic_fallback_analysis()
-    
-    def _get_basic_fallback_analysis(self) -> Dict[str, Any]:
-        """Basic fallback analysis when Llama 3 fails"""
-        return {
-            "classification": {
-                "category": "unknown",
-                "severity": "medium",
-                "confidence": 0.5,
-                "threat_type": "Unable to classify - Llama 3 unavailable",
-                "attack_patterns": [],
-                "mitre_techniques": []
-            },
-            "recommendations": {
-                "immediate_actions": ["Investigate alert manually", "Check system logs"],
-                "investigation_steps": ["Review alert details", "Analyze affected systems"],
-                "containment_strategies": ["Monitor for suspicious activity"],
-                "prevention_measures": ["Update security policies", "Enhance monitoring"]
-            },
-            "risk_assessment": {
-                "business_impact": "medium",
-                "technical_impact": "medium",
-                "urgency": "medium",
-                "attack_surface": "Unknown"
-            },
-            "semantic_analysis": {
-                "rag_matches": [],
-                "similarity_scores": {
-                    "Similarity with ChromaDB knowledge base": 0.0,
-                    "Similarity with VirusTotal threat intelligence": 0.0
-                },
-                "context_understanding": "Basic context analysis completed"
-            }
-        }
     
     def _generate_specific_recommendations(self, category: str, severity: str, 
                                         observables: Dict, mitre_techniques: List) -> Dict[str, List[str]]:

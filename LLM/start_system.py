@@ -10,7 +10,7 @@ import os
 # Add src to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-from src.analyses import AdvancedAnalyzer
+from src.analyze import CleanAnalyzer
 from src.api_tokens import APITokens
 import uvicorn
 
