@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     
     # Logging
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
-    log_file: str = os.getenv("LOG_FILE", os.path.join(os.getcwd(), "logs", "alert_enrichment.log"))
+    log_file: str = os.getenv("LOG_FILE", os.path.join(os.getcwd(), "data", "alert_enrichment.log"))
     
     # Threat Intelligence API Keys
     virustotal_api_key: Optional[str] = os.getenv("VIRUSTOTAL_API_KEY")

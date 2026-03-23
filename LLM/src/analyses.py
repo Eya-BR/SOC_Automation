@@ -12,6 +12,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 
 from .api_tokens import APITokens
+from src.mitre_rag_loader import MiterRAGLoader
 from .rag_system import AdvancedRAGSystem
 
 logger = logging.getLogger(__name__)
@@ -23,48 +24,207 @@ class AdvancedAnalyzer:
         """Initialize advanced analyzer"""
         self.tokens = APITokens()
         self.rag_system = AdvancedRAGSystem()
+        self.mitre_loader = MiterRAGLoader(self.rag_system)
         
         # Check available APIs
         self.virustotal_available = self.tokens.is_configured('virustotal')
         logger.info(f"Advanced Analyzer initialized - VT: {self.virustotal_available}, RAG: ChromaDB")
     
     def analyze_alert(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Comprehensive alert analysis with professional RAG + Llama 3
-        
-        Args:
-            alert_data: Security alert to analyze
-            
-        Returns:
-            Comprehensive analysis with semantic understanding
-        """
+        """Analyze security alert with enhanced context awareness"""
         try:
-            alert_id = alert_data.get('_id', 'unknown')
-            logger.info(f"Starting advanced analysis for alert: {alert_id}")
+            # Extract alert ID from Splunk SID
+            alert_id = alert_data.get("sid", "unknown")
             
-            # Step 1: Extract observables
+            # Extract observables
             observables = self._extract_observables(alert_data)
             
-            # Step 2: Get semantic RAG context
+            # Get RAG context
             rag_context = self.rag_system.retrieve_relevant_context(alert_data)
             
-            # Step 3: VirusTotal analysis
-            virustotal_analysis = self._analyze_virustotal(observables)
+            # Get VirusTotal analysis (only if observables exist)
+            vt_analysis = self._analyze_virustotal(observables) if self.virustotal_available and (observables.get('ips') or observables.get('domains') or observables.get('hashes')) else {"status": "skipped", "reason": "No relevant observables"}
             
-            # Step 4: Analyze with Llama 3 using enhanced context
-            llama_analysis = self._analyze_with_llama3(alert_data, rag_context, virustotal_analysis)
+            # Get Llama 3 analysis with context validation
+            llama_analysis = self._analyze_with_llama_context_aware(alert_data, rag_context)
             
-            # Step 5: Generate comprehensive analysis
-            final_analysis = self._generate_comprehensive_analysis(
-                alert_data, observables, rag_context, virustotal_analysis, llama_analysis
-            )
+            # Calculate unified severity (trust Splunk source)
+            final_severity = self._calculate_unified_severity(alert_data, llama_analysis, rag_context)
             
-            logger.info(f"Advanced analysis completed for alert: {alert_id}")
-            return final_analysis
+            # Generate context-aware recommendations (no duplication)
+            recommendations = self._generate_contextual_recommendations(alert_data, llama_analysis, observables)
+            
+            # Build final analysis (trust Splunk, LLM enriches)
+            analysis = {
+                "alert_id": alert_id,
+                "analysis_timestamp": datetime.now().isoformat(),
+                "source": {
+                    "system": "Splunk",
+                    "rule": alert_data.get("search_name", "Unknown"),
+                    "source_severity": "high",  # Trust Splunk detection
+                    "confidence": 0.9
+                },
+                "threat_score": llama_analysis.get("confidence", 0.0),
+                "overall_severity": final_severity,
+                "observables": observables,
+                "context_analysis": {
+                    "account_type": self._detect_account_type(alert_data),
+                    "privilege_analysis": self._analyze_privilege_usage(alert_data),
+                    "hypothesis": llama_analysis.get("hypothesis", "Unknown"),
+                    "confidence_level": llama_analysis.get("confidence", 0.0),
+                    "validation_notes": self._generate_validation_notes(alert_data, observables)
+                },
+                "rag_analysis": {
+                    "matches": rag_context,
+                    "total_matches": len(rag_context),
+                    "highest_similarity": max([m.get("similarity", 0) for m in rag_context]) if rag_context else 0,
+                    "collections_searched": list(self.rag_system.collections.keys())
+                },
+                "virustotal_analysis": vt_analysis,
+                "llm_enrichment": llama_analysis,
+                "assessment": {
+                    "threat_type": llama_analysis.get("hypothesis", "Unknown threat"),
+                    "confidence": final_severity == "high" or final_severity == "critical",
+                    "urgency": final_severity,
+                    "business_impact": final_severity,
+                    "attack_surface": self._calculate_attack_surface(observables)
+                },
+                "recommendations": recommendations,
+                "summary": f"Splunk: {alert_data.get('search_name', 'Unknown')} | LLM: {llama_analysis.get('hypothesis', 'Unknown')} | Severity: {final_severity}"
+            }
+            
+            return analysis
             
         except Exception as e:
-            logger.error(f"Advanced analysis error: {e}")
-            return self._get_smart_fallback_analysis(alert_data)
+            logger.error(f"Error analyzing alert: {e}")
+            return {
+                "error": str(e),
+                "alert_id": alert_data.get("sid", "unknown"),
+                "analysis_timestamp": datetime.now().isoformat(),
+                "threat_score": 0.0,
+                "overall_severity": "medium"
+            }
+    
+    def _detect_account_type(self, alert_data: Dict[str, Any]) -> str:
+        """Detect if account is machine, human, or service"""
+        try:
+            user = alert_data.get("result", {}).get("user", "")
+            if user.endswith("$"):
+                return "machine_account"
+            elif user.lower().startswith(("svc_", "service_", "mssql_", "iis_")):
+                return "service_account"
+            else:
+                return "human_account"
+        except:
+            return "unknown"
+    
+    def _analyze_privilege_usage(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze privilege usage context"""
+        try:
+            privilege = alert_data.get("result", {}).get("Privileges", "")
+            host = alert_data.get("result", {}).get("host", "")
+            
+            privilege_context = {
+                "privilege": privilege,
+                "risk_level": "medium",
+                "legitimate_uses": [],
+                "suspicious_indicators": []
+            }
+            
+            # SeSecurityPrivilege analysis
+            if "SeSecurityPrivilege" in privilege:
+                privilege_context["legitimate_uses"] = [
+                    "Domain Controller operations",
+                    "Backup and restore operations", 
+                    "Security audit log access",
+                    "System monitoring tools"
+                ]
+                privilege_context["suspicious_indicators"] = [
+                    "Usage by non-system accounts",
+                    "Unexpected host usage",
+                    "Outside maintenance windows"
+                ]
+                privilege_context["risk_level"] = "medium"
+            
+            # Check if host is likely Domain Controller
+            if host and any(dc_indicator in host.upper() for dc_indicator in ["DC", "AD", "PDC", "BDC"]):
+                privilege_context["legitimate_uses"].append("Domain Controller normal operations")
+                privilege_context["risk_level"] = "low"
+            
+            return privilege_context
+        except:
+            return {"privilege": "unknown", "risk_level": "medium"}
+    
+    def _generate_validation_notes(self, alert_data: Dict[str, Any], observables: Dict) -> List[str]:
+        """Generate context-aware validation notes"""
+        notes = []
+        
+        try:
+            account_type = self._detect_account_type(alert_data)
+            user = alert_data.get("result", {}).get("user", "")
+            host = alert_data.get("result", {}).get("host", "")
+            privilege = alert_data.get("result", {}).get("Privileges", "")
+            
+            # Machine account validation
+            if account_type == "machine_account":
+                notes.append(f"Machine account detected ({user}) - activity may be legitimate")
+                notes.append("Verify if this is expected service/system behavior")
+            
+            # Domain Controller validation
+            if host and any(dc in host.upper() for dc in ["DC", "AD01"]):
+                notes.append(f"Host {host} appears to be Domain Controller")
+                notes.append("Elevated privileges may be normal for DC operations")
+            
+            # Privilege validation
+            if "SeSecurityPrivilege" in privilege:
+                notes.append("SeSecurityPrivilege allows access to security logs and audit data")
+                notes.append("Commonly used by backup tools, monitoring agents, and system services")
+            
+            # General validation
+            notes.append("Validate against change management and maintenance windows")
+            notes.append("Check for concurrent legitimate activities")
+            
+        except Exception as e:
+            notes.append(f"Validation error: {e}")
+        
+        return notes
+    
+    def _calculate_unified_severity(self, alert_data: Dict[str, Any], llama_analysis: Dict, rag_context: List[Dict]) -> str:
+        """Calculate unified severity trusting Splunk source"""
+        try:
+            # Base severity from Splunk rule (trust the detection)
+            alert_name = alert_data.get("search_name", "").lower()
+            base_severity = "high" if "privilege escalation" in alert_name else "medium"
+            
+            # Account type modifier
+            account_type = self._detect_account_type(alert_data)
+            if account_type == "machine_account":
+                base_severity = "medium"  # Lower risk for machine accounts
+            elif account_type == "service_account":
+                base_severity = "medium"  # Moderate risk for service accounts
+            
+            # Context modifiers
+            host = alert_data.get("result", {}).get("host", "")
+            if host and any(dc in host.upper() for dc in ["DC", "AD01"]):
+                base_severity = "low"  # Lower risk for Domain Controllers
+            
+            # RAG confidence modifier
+            rag_confidence = max([m.get("similarity", 0) for m in rag_context]) if rag_context else 0
+            if rag_confidence > 0.8:
+                # Keep current severity if high RAG confidence
+                pass
+            elif rag_confidence < 0.3:
+                # Lower severity if low RAG confidence
+                if base_severity == "critical":
+                    base_severity = "high"
+                elif base_severity == "high":
+                    base_severity = "medium"
+            
+            return base_severity
+            
+        except Exception as e:
+            logger.error(f"Error calculating unified severity: {e}")
+            return "medium"
     
     def _extract_observables(self, alert_data: Dict[str, Any]) -> Dict[str, List[str]]:
         """Extract all observables from alert"""
@@ -478,10 +638,10 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
                 "mitre_techniques": []
             },
             "recommendations": {
-                "immediate_actions": ["Investigate alert manually", "Check system logs"],
-                "investigation_steps": ["Review alert details", "Analyze affected systems"],
-                "containment_strategies": ["Monitor for suspicious activity"],
-                "prevention_measures": ["Update security policies", "Enhance monitoring"]
+                'immediate_actions': ['Investigate alert manually', 'Check system logs'],
+                'investigation_steps': ['Review alert details', 'Analyze affected systems'],
+                'containment_strategies': ['Monitor for suspicious activity'],
+                'prevention_measures': ['Update security policies', 'Enhance monitoring']
             },
             "risk_assessment": {
                 "business_impact": "medium",
@@ -778,21 +938,21 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
                     'Check for concurrent sessions from different locations'
                 ])
                 recommendations['investigation_steps'].extend([
-                    'Review authentication logs for affected user',
+                    'Review authentication logs for the affected user',
                     'Check account activity patterns',
-                    'Verify if this is expected behavior for user'
+                    'Verify if this is expected behavior for the user'
                 ])
             elif category == 'privilege_escalation':
                 recommendations['immediate_actions'].extend([
-                    'Review privilege assignment and justification',
-                    'Verify change management approval'
+                    'Verify if privilege escalation is authorized',
+                    'Check user permissions and recent changes'
                 ])
                 recommendations['investigation_steps'].extend([
-                    'Analyze privilege escalation timeline',
+                    'Review privilege assignment logs',
                     'Check for unauthorized privilege changes',
-                    'Review account permissions and roles'
+                    'Analyze what actions were taken with elevated privileges'
                 ])
-        
+            
             return {
                 "classification": {
                     "category": category,
@@ -949,8 +1109,242 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
             'error': 'Advanced analysis system unavailable',
             'recommendations': {
                 'immediate_actions': ['Investigate alert manually'],
-                'investigation_steps': ['Review alert details', 'Check system logs'],
+                'investigation_steps': ['Review alert details'],
                 'containment_strategies': ['Monitor for suspicious activity'],
                 'prevention_measures': ['Update security policies']
             }
         }
+    
+    def _analyze_with_llama_context_aware(self, alert_data: Dict[str, Any], rag_context: List[Dict]) -> Dict[str, Any]:
+        """Context-aware Llama 3 analysis that avoids hallucinations"""
+        try:
+            # Extract key context
+            user = alert_data.get("result", {}).get("user", "")
+            host = alert_data.get("result", {}).get("host", "")
+            privilege = alert_data.get("result", {}).get("Privileges", "")
+            account_type = self._detect_account_type(alert_data)
+            
+            # Build context-aware prompt
+            prompt = f"""Analyze this security alert with context awareness:
+
+Alert Details:
+- User: {user} ({account_type})
+- Host: {host}
+- Privilege: {privilege}
+- Alert: {alert_data.get('search_name', 'Unknown')}
+
+Context Rules:
+1. Machine accounts (ending with $) are often legitimate
+2. Domain Controllers (AD01, DC hosts) normally use elevated privileges
+3. SeSecurityPrivilege is used for security log access, backup, monitoring
+4. DO NOT assume "attacker" or "vulnerability" without evidence
+5. Focus on hypothesis and confidence level
+6. MITRE techniques should be suggested but not forced - use "unknown" if unclear
+
+Provide analysis as JSON:
+{{
+    "hypothesis": "Clear statement of what might be happening",
+    "confidence": 0.0-1.0,
+    "context_factors": ["list of relevant context factors"],
+    "legitimate_explanations": ["possible legitimate reasons"],
+    "suspicious_indicators": ["potential suspicious indicators"],
+    "requires_investigation": true/false,
+    "mitre_techniques": ["TXXXX" if confident, otherwise "unknown"]
+}}
+
+Respond ONLY with valid JSON. No explanations."""
+            
+            response = self._call_llama3(prompt)
+            if response:
+                return self._parse_contextual_response(response, alert_data)
+            else:
+                return self._get_contextual_fallback_with_mitre(alert_data)
+                
+        except Exception as e:
+            logger.error(f"Error in context-aware analysis: {e}")
+            return self._get_contextual_fallback_with_mitre(alert_data)
+    
+    def _parse_contextual_response(self, response: str, alert_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse contextual Llama 3 response"""
+        try:
+            # Extract JSON from response
+            import json
+            import re
+            
+            # Find JSON in response
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                parsed = json.loads(json_str)
+                
+                # Use RAG-based MITRE mapping (always up-to-date)
+                rag_mitre = self.mitre_loader.search_mitre_techniques(alert_data)
+                
+                # Validate LLM suggestions against RAG results
+                mitre_suggestions = parsed.get("mitre_techniques", [])
+                validated_mitre = self._validate_llm_suggestions(mitre_suggestions, rag_mitre)
+                
+                # Combine RAG and validated LLM suggestions
+                final_mitre = rag_mitre + validated_mitre
+                
+                # Ensure required fields
+                return {
+                    "hypothesis": parsed.get("hypothesis", "Unknown activity detected"),
+                    "confidence": float(parsed.get("confidence", 0.5)),
+                    "context_factors": parsed.get("context_factors", []),
+                    "legitimate_explanations": parsed.get("legitimate_explanations", []),
+                    "suspicious_indicators": parsed.get("suspicious_indicators", []),
+                    "requires_investigation": parsed.get("requires_investigation", True),
+                    "mitre_techniques": final_mitre  # RAG + validated MITRE
+                }
+            else:
+                return self._get_contextual_fallback_with_rag(alert_data)
+        except Exception as e:
+            logger.error(f"Error parsing contextual response: {e}")
+            return self._get_contextual_fallback_with_rag(alert_data)
+    
+    def _get_contextual_fallback(self) -> Dict[str, Any]:
+        """Fallback contextual analysis"""
+        return {
+            "hypothesis": "Privilege usage detected - requires validation",
+            "confidence": 0.4,
+            "context_factors": ["Privilege escalation alert", "System activity"],
+            "legitimate_explanations": ["System maintenance", "Service operations"],
+            "suspicious_indicators": ["Unauthorized privilege usage"],
+            "requires_investigation": True,
+            "mitre_techniques": []  # Empty until context is provided
+        }
+    
+    def _get_contextual_fallback_with_rag(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Fallback contextual analysis with RAG-based MITRE mapping"""
+        # Use RAG for MITRE techniques (always up-to-date)
+        rag_mitre = self.mitre_loader.search_mitre_techniques(alert_data)
+        
+        return {
+            "hypothesis": "Privilege usage detected - requires validation",
+            "confidence": 0.4,
+            "context_factors": ["Privilege escalation alert", "System activity"],
+            "legitimate_explanations": ["System maintenance", "Service operations"],
+            "suspicious_indicators": ["Unauthorized privilege usage"],
+            "requires_investigation": True,
+            "mitre_techniques": rag_mitre
+        }
+    
+    def _validate_llm_suggestions(self, llm_suggestions: List, rag_results: List) -> List:
+        """Validate LLM suggestions against RAG results"""
+        validated = []
+        rag_ids = {r.get('id', '') for r in rag_results}
+        
+        for suggestion in llm_suggestions:
+            if isinstance(suggestion, str) and suggestion.startswith("T"):
+                # Check if LLM suggestion exists in RAG results
+                if suggestion in rag_ids:
+                    validated.append({
+                        "id": suggestion,
+                        "name": next((r.get('name', '') for r in rag_results if r.get('id') == suggestion), ''),
+                        "confidence": "medium",
+                        "reason": "LLM suggestion validated by RAG"
+                    })
+                else:
+                    # LLM hallucination - mark as low confidence
+                    validated.append({
+                        "id": suggestion,
+                        "name": "Unknown technique",
+                        "confidence": "low",
+                        "reason": "LLM suggestion - not found in ATT&CK database"
+                    })
+        
+        return validated
+    
+    def _get_contextual_fallback_with_mitre(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Fallback contextual analysis with MITRE mapping"""
+        # Generate context-based MITRE mapping
+        mitre_mapping = generate_mitre_mapping(alert_data=alert_data, llama_suggestions=[])
+        
+        return {
+            "hypothesis": "Privilege usage detected - requires validation",
+            "confidence": 0.4,
+            "context_factors": ["Privilege escalation alert", "System activity"],
+            "legitimate_explanations": ["System maintenance", "Service operations"],
+            "suspicious_indicators": ["Unauthorized privilege usage"],
+            "requires_investigation": True,
+            "mitre_techniques": mitre_mapping
+        }
+    
+    def _generate_contextual_recommendations(self, alert_data: Dict[str, Any], llama_analysis: Dict, observables: Dict) -> Dict[str, List[str]]:
+        """Generate context-aware recommendations without duplication"""
+        recommendations = {
+            'immediate_actions': [],
+            'investigation_steps': [],
+            'containment_strategies': [],
+            'prevention_measures': []
+        }
+        
+        try:
+            account_type = self._detect_account_type(alert_data)
+            user = alert_data.get("result", {}).get("user", "")
+            host = alert_data.get("result", {}).get("host", "")
+            privilege = alert_data.get("result", {}).get("Privileges", "")
+            requires_investigation = llama_analysis.get("requires_investigation", True)
+            
+            # Account type specific recommendations
+            if account_type == "machine_account":
+                recommendations['immediate_actions'].extend([
+                    "Verify machine account activity is expected",
+                    "Check service schedules and maintenance windows"
+                ])
+                recommendations['investigation_steps'].extend([
+                    "Review service configuration",
+                    "Validate against change management records"
+                ])
+            else:
+                recommendations['immediate_actions'].extend([
+                    "Verify user authorization for privilege usage",
+                    "Check for concurrent legitimate activities"
+                ])
+                recommendations['investigation_steps'].extend([
+                    "Review user account activity history",
+                    "Validate privilege assignment justification"
+                ])
+            
+            # Host-specific recommendations
+            if host and any(dc in host.upper() for dc in ["DC", "AD01"]):
+                recommendations['immediate_actions'].append("Verify Domain Controller normal operations")
+                recommendations['containment_strategies'].append("Monitor for additional DC anomalies")
+            
+            # Privilege-specific recommendations
+            if "SeSecurityPrivilege" in privilege:
+                recommendations['investigation_steps'].extend([
+                    "Review security log access patterns",
+                    "Check backup and monitoring tool activity"
+                ])
+            
+            # General recommendations
+            if requires_investigation:
+                recommendations['containment_strategies'].append("Enhanced monitoring of affected system")
+                recommendations['prevention_measures'].extend([
+                    "Implement principle of least privilege",
+                    "Regular access reviews and audits"
+                ])
+            
+            # Ensure at least one recommendation in each category
+            if not recommendations['immediate_actions']:
+                recommendations['immediate_actions'].append("Review alert context and validate activity")
+            if not recommendations['investigation_steps']:
+                recommendations['investigation_steps'].append("Analyze system logs for related activity")
+            if not recommendations['containment_strategies']:
+                recommendations['containment_strategies'].append("Monitor for additional suspicious activity")
+            if not recommendations['prevention_measures']:
+                recommendations['prevention_measures'].append("Review and update security policies")
+                
+        except Exception as e:
+            logger.error(f"Error generating contextual recommendations: {e}")
+            # Fallback recommendations
+            recommendations = {
+                'immediate_actions': ['Investigate alert manually'],
+                'investigation_steps': ['Review alert details'],
+                'containment_strategies': ['Monitor for suspicious activity'],
+                'prevention_measures': ['Update security policies']
+            }
+        
+        return recommendations
