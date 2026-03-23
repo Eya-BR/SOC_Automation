@@ -11,7 +11,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 
 from .api_tokens import APITokens
-from src.mitre_rag_loader import MiterRAGLoader
+from .mitre_rag_loader import MiterRAGLoader
 from .rag_system import AdvancedRAGSystem
 
 logger = logging.getLogger(__name__)
@@ -197,6 +197,46 @@ class CleanAnalyzer:
         recommendations['prevention_measures'].append("Implement principle of least privilege")
         
         return recommendations
+    
+    def _call_llama3(self, prompt: str) -> str:
+        """Call Llama 3 via Ollama"""
+        try:
+            url = "http://localhost:11434/api/generate"
+            payload = {
+                "model": "llama3.2",
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.1,
+                    "top_p": 0.9,
+                    "max_tokens": 2000,
+                    "repeat_penalty": 1.1
+                }
+            }
+            
+            response = requests.post(url, json=payload, timeout=60)
+            if response.status_code == 200:
+                return response.json().get("response", "")
+            else:
+                logger.error(f"Llama 3 API error: {response.status_code}")
+                return ""
+                
+        except Exception as e:
+            logger.error(f"Error calling Llama 3: {e}")
+            return ""
+    
+    def _get_fallback_analysis(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Clean fallback analysis"""
+        rag_mitre = self.mitre_loader.search_mitre_techniques(alert_data)
+        
+        return {
+            "hypothesis": "Privilege usage detected - requires validation",
+            "confidence": 0.3,
+            "legitimate_explanations": ["System maintenance", "Service operations"],
+            "suspicious_indicators": ["Privilege usage detected"],
+            "requires_investigation": True,
+            "mitre_techniques": rag_mitre
+        }
     
     def _extract_observables(self, alert_data: Dict[str, Any]) -> Dict[str, List[str]]:
         """Extract observables from alert"""

@@ -128,10 +128,91 @@ SOC Analyst Framework: Assume innocent until proven guilty. False positive first
 
 ## Enterprise Context Analysis
 
-Enterprise Context Analysis: Domain Controller normal behavior includes SeSecurityPrivilege, Event IDs 4672-4674. Service accounts perform legitimate automated operations. Business operations include maintenance windows, change management, seasonal patterns. Professional triage: Rapid context assessment → Quick validation → Detailed analysis → Decision making with business impact consideration.
+Domain Controller normal behavior includes SeSecurityPrivilege, Event IDs 4672-4674. Service accounts perform legitimate automated operations. Business operations include maintenance windows, change management, seasonal patterns. Professional triage: Rapid context assessment → Quick validation → Detailed analysis → Decision making with business impact consideration.
 
 **Tags:** enterprise, context, business, operations, triage, risk  
 **Category:** privilege_escalation
+
+## 🎯 Professional Triage Process
+
+### **Step 1: Rapid Context Assessment (First 2 Minutes)**
+-- **Account Type**: Machine vs Human
+-- **Host Role**: DC, Server, Workstation  
+-- **Activity Type**: Normal vs Suspicious
+
+### **Step 2: Quick Validation (Next 3 Minutes)**
+-- **Baseline Validation**: Comparison with normal behavior
+-- **Context Verification**: Business justification check
+-- **Authorization Confirmation**: Change management validation
+-- **Risk Assessment**: Professional threat determination
+
+### **ALWAYS Document:**
+1. **Analysis Steps**: What was examined and why
+2. **Evidence Sources**: RAG, VirusTotal, LLM analysis
+3. **Context Factors**: Account type, host role, business context
+4. **Risk Determination**: How threat level was calculated
+5. **Business Impact**: Operational and security implications
+
+### **Step 3: Detailed Analysis (Next 5 Minutes)**
+-- **Technical Analysis**: Event details and patterns
+-- **Threat Classification**: Benign, Suspicious, Malicious
+-- **Risk Assessment**: Business impact and urgency
+-- **Response Planning**: Immediate actions needed
+-- **Documentation**: Complete analysis record
+
+### **Step 4: Decision Making (First 1 Hour)**
+-- **Threat Classification**: Benign, Suspicious, Malicious
+-- **Risk Assessment**: Business impact and urgency
+-- **Response Planning**: Immediate actions needed
+-- **Documentation**: Complete analysis record
+
+## 📊 Enterprise Risk Assessment
+
+### **Risk Factors by Context**
+-- **Machine Accounts**: Lower risk baseline
+-- **Domain Controllers**: Expected elevated privileges
+-- **Service Accounts**: Automated operations context
+-- **Human Accounts**: Higher risk assessment
+-- **Business Hours**: Normal vs after-hours
+-- **Change Management**: Authorized modifications
+
+## 📋 Clean Analysis Output Structure
+
+### **✅ Final Output Format:**
+```json
+{
+  "alert_id": "unknown",
+  "analysis_timestamp": "...",
+  "source": {
+    "system": "Splunk",
+    "rule": "AD - Privilege Escalation Detected",
+    "source_severity": "high"
+  },
+  "threat_score": 0.3,
+  "overall_severity": "low",
+  "observables": {...},
+  "virustotal_analysis": {...},
+  "llm_enrichment": {
+    "hypothesis": "SeSecurityPrivilege usage detected on host AD01",
+    "confidence": 0.2,
+    "note": "Machine account (AD01$) detected, activity may be legitimate",
+    "recommendations": {
+      "immediate_actions": ["Verify machine account activity is expected"],
+      "investigation_steps": ["Review service configuration"],
+      "containment_strategies": [],
+      "prevention_measures": ["Implement principle of least privilege"]
+    }
+  },
+  "summary": "Splunk: AD - Privilege Escalation Detected | LLM: SeSecurityPrivilege usage detected on host AD01 | Severity: low"
+}
+```
+
+### **✅ Key Principles:**
+- **No duplicate blocks** - Single clean structure
+- **No hallucinations** - Evidence-based analysis only
+- **Context-aware** - Account type and host role consideration
+- **Professional triage** - Structured decision-making process
+- **Business impact focus** - Operational implications
 
 ---
 
