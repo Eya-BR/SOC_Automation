@@ -78,7 +78,7 @@ class AdvancedAnalyzer:
             # Add recommendations to llama_analysis for consistency
             llama_analysis["recommendations"] = recommendations
             
-            # Build final analysis (trust Splunk, LLM enriches)
+            # Build final analysis (trust Splunk, LLM enriches) - CLEAN STRUCTURE
             analysis = {
                 "alert_id": alert_id,
                 "analysis_timestamp": datetime.now().isoformat(),
@@ -1123,14 +1123,27 @@ RESPOND ONLY WITH VALID JSON. NO EXPLANATIONS."""
                 # Only use RAG-based MITRE mapping
                 rag_mitre = self.mitre_loader.search_mitre_techniques(alert_data)
                 
-                # Force uncertainty for machine accounts
+                # FORCE UNCERTAINTY for machine accounts - NO HALLUCINATIONS
                 user = alert_data.get("result", {}).get("user", "")
                 if user.endswith("$"):
+                    # Machine account = legitimate behavior
                     parsed["hypothesis"] = f"SeSecurityPrivilege usage detected on host {alert_data.get('result', {}).get('host', 'Unknown')}"
-                    parsed["confidence"] = 0.2  # Low confidence for machine accounts
+                    parsed["confidence"] = 0.2  # Force low confidence
                     parsed["legitimate_explanations"] = ["Machine account performing legitimate operations", "System maintenance or service activity"]
                     parsed["suspicious_indicators"] = []
                     parsed["requires_investigation"] = False
+                    # NO ATTACKER LANGUAGE
+                    if "attacker" in parsed.get("hypothesis", "").lower():
+                        parsed["hypothesis"] = "SeSecurityPrivilege usage detected on host"
+                    if "exploit" in parsed.get("hypothesis", "").lower():
+                        parsed["hypothesis"] = "SeSecurityPrivilege usage detected on host"
+                    if "vulnerability" in parsed.get("hypothesis", "").lower():
+                        parsed["hypothesis"] = "SeSecurityPrivilege usage detected on host"
+                else:
+                    # Human account - can be suspicious but still require evidence
+                    if "attacker" in parsed.get("hypothesis", "").lower():
+                        parsed["hypothesis"] = "Privilege usage detected - requires investigation"
+                    parsed["confidence"] = min(parsed.get("confidence", 0.3), 0.5)  # Cap confidence
                 
                 # Ensure required fields with validated MITRE
                 return {
