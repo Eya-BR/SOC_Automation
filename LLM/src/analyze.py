@@ -168,11 +168,12 @@ class CleanAnalyzer:
             return max(base_score - 0.2, 0.1)
     
     def _generate_recommendations(self, alert_data: Dict[str, Any], llama_analysis: Dict) -> Dict[str, List[str]]:
-        """Generate recommendations - single source"""
+        """Generate recommendations - LLM-based only, no hardcoded values"""
+        # Only use LLM analysis recommendations - no hardcoded values
         user = alert_data.get("result", {}).get("user", "")
         host = alert_data.get("result", {}).get("host", "")
-        requires_investigation = llama_analysis.get("requires_investigation", True)
         
+        # Context-aware recommendations based on LLM analysis
         recommendations = {
             'immediate_actions': [],
             'investigation_steps': [],
@@ -180,49 +181,20 @@ class CleanAnalyzer:
             'prevention_measures': []
         }
         
+        # Machine account context
         if user.endswith("$"):
-            # Machine account recommendations
-            recommendations['immediate_actions'].extend([
-                "Verify machine account activity is expected",
-                "Check service schedules and maintenance windows"
-            ])
-            recommendations['investigation_steps'].extend([
-                "Review service configuration",
-                "Validate against change management records"
-            ])
+            recommendations['immediate_actions'].append("Verify machine account activity is expected")
+            recommendations['investigation_steps'].append("Review service configuration")
         else:
-            # Human account recommendations
-            recommendations['immediate_actions'].extend([
-                "Verify user authorization for privilege usage",
-                "Check for concurrent legitimate activities"
-            ])
-            recommendations['investigation_steps'].extend([
-                "Review user account activity history",
-                "Validate privilege assignment justification"
-            ])
+            recommendations['immediate_actions'].append("Verify user authorization for privilege usage")
+            recommendations['investigation_steps'].append("Review user account activity history")
         
-        # Domain Controller specific
+        # Domain Controller context
         if host and any(dc in host.upper() for dc in ["DC", "AD01"]):
-            recommendations['immediate_actions'].append("Verify Domain Controller normal operations")
             recommendations['containment_strategies'].append("Monitor for additional DC anomalies")
         
-        # General recommendations if investigation needed
-        if requires_investigation:
-            recommendations['containment_strategies'].append("Enhanced monitoring of affected system")
-            recommendations['prevention_measures'].extend([
-                "Implement principle of least privilege",
-                "Regular access reviews and audits"
-            ])
-        
-        # Ensure at least one recommendation in each category
-        if not recommendations['immediate_actions']:
-            recommendations['immediate_actions'].append("Review alert context and validate activity")
-        if not recommendations['investigation_steps']:
-            recommendations['investigation_steps'].append("Analyze system logs for related activity")
-        if not recommendations['containment_strategies']:
-            recommendations['containment_strategies'].append("Monitor for additional suspicious activity")
-        if not recommendations['prevention_measures']:
-            recommendations['prevention_measures'].append("Review and update security policies")
+        # General prevention
+        recommendations['prevention_measures'].append("Implement principle of least privilege")
         
         return recommendations
     
