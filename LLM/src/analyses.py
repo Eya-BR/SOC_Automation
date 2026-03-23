@@ -93,10 +93,15 @@ class AdvancedAnalyzer:
                     "hypothesis": llama_analysis.get("hypothesis", "Unknown activity"),
                     "confidence": llama_analysis.get("confidence", 0.0),
                     "mitre_techniques": llama_analysis.get("mitre_techniques", []),
-                    "note": self._generate_context_note(alert_data)
+                    "note": self._generate_context_note(alert_data),
+                    "recommendations": llama_analysis.get("recommendations", {
+                        "immediate_actions": [],
+                        "investigation_steps": [],
+                        "containment_strategies": [],
+                        "prevention_measures": []
+                    })
                 },
                 "mitre_techniques": llama_analysis.get("mitre_techniques", []),
-                "recommendations": recommendations,
                 "summary": f"Splunk: {alert_data.get('search_name', 'Unknown')} | LLM: {llama_analysis.get('hypothesis', 'Unknown')} | Severity: {final_severity}"
             }
             
@@ -1173,27 +1178,27 @@ Alert Details:
 
 CRITICAL EVIDENCE RULES:
 1. ONLY use facts from alert - NO assumptions beyond provided data
-2. NEVER assume "attacker", "vulnerability", or "exploit" without explicit evidence
-3. Machine accounts (ending with $) are often legitimate - do NOT assume malicious intent
-4. SeSecurityPrivilege is used for legitimate system operations - do NOT assume exploitation
-5. If evidence is insufficient, state "insufficient evidence" with low confidence
-6. MITRE techniques: ONLY suggest if strong evidence exists, otherwise use "unknown"
+2. NEVER assume "attacker", "vulnerability", or "exploit" unless explicitly stated
+3. Machine accounts (ending with $) are legitimate system accounts
+4. SeSecurityPrivilege is used for legitimate system operations
+5. If evidence is insufficient, state uncertainty and possible benign explanations
+6. MITRE techniques: Do NOT generate - use "unknown" only
 
 Account Type Rules:
-- Machine accounts (ending with $) are legitimate system accounts
-- Domain Controllers (AD01) normally use elevated privileges
-- SeSecurityPrivilege is used for auditing and log management
+- Machine accounts (ending with $) = legitimate system behavior
+- Domain Controllers (AD01) = expected elevated privileges
+- SeSecurityPrivilege = used for auditing and log management
 
 Required JSON format:
 {{
-    "hypothesis": "Clear statement based ONLY on provided evidence",
+    "hypothesis": "Statement based ONLY on provided evidence",
     "confidence": 0.0-1.0,
     "evidence_available": true/false,
-    "context_factors": ["list of ONLY observable factors"],
-    "legitimate_explanations": ["possible legitimate reasons"],
-    "suspicious_indicators": ["potential indicators based on evidence"],
+    "context_factors": ["observable factors only"],
+    "legitimate_explanations": ["possible benign reasons"],
+    "suspicious_indicators": ["indicators based on evidence"],
     "requires_investigation": true/false,
-    "mitre_techniques": ["unknown"]  // Let RAG provide validated techniques
+    "mitre_techniques": ["unknown"]
 }}
 
 RESPOND ONLY WITH VALID JSON. NO EXPLANATIONS."""
@@ -1221,33 +1226,28 @@ RESPOND ONLY WITH VALID JSON. NO EXPLANATIONS."""
                 json_str = json_match.group(0)
                 parsed = json.loads(json_str)
                 
-                # Use RAG-based MITRE mapping (always up-to-date)
+                # BLOCK LLM MITRE suggestions completely
+                # Only use RAG-based MITRE mapping
                 rag_mitre = self.mitre_loader.search_mitre_techniques(alert_data)
                 
-                # Validate LLM suggestions against RAG results
-                mitre_suggestions = parsed.get("mitre_techniques", [])
-                validated_mitre = self._validate_llm_suggestions(mitre_suggestions, rag_mitre)
+                # Force uncertainty for machine accounts
+                user = alert_data.get("result", {}).get("user", "")
+                if user.endswith("$"):
+                    parsed["hypothesis"] = f"SeSecurityPrivilege usage detected on host {alert_data.get('result', {}).get('host', 'Unknown')}"
+                    parsed["confidence"] = 0.2  # Low confidence for machine accounts
+                    parsed["legitimate_explanations"] = ["Machine account performing legitimate operations", "System maintenance or service activity"]
+                    parsed["suspicious_indicators"] = []
+                    parsed["requires_investigation"] = False
                 
-                # COMBINE: Prefer RAG results over LLM hallucinations
-                final_mitre = rag_mitre + validated_mitre
-                
-                # Remove duplicates and limit to top 3
-                seen_ids = set()
-                unique_mitre = []
-                for item in final_mitre:
-                    if item.get("id", "unknown") not in seen_ids and len(unique_mitre) < 3:
-                        seen_ids.add(item.get("id", "unknown"))
-                        unique_mitre.append(item)
-                
-                # Ensure required fields
+                # Ensure required fields with validated MITRE
                 return {
-                    "hypothesis": parsed.get("hypothesis", "Unknown activity detected"),
-                    "confidence": float(parsed.get("confidence", 0.5)),
+                    "hypothesis": parsed.get("hypothesis", "Privilege usage detected"),
+                    "confidence": float(parsed.get("confidence", 0.3)),  # Default to low confidence
                     "context_factors": parsed.get("context_factors", []),
                     "legitimate_explanations": parsed.get("legitimate_explanations", []),
                     "suspicious_indicators": parsed.get("suspicious_indicators", []),
                     "requires_investigation": parsed.get("requires_investigation", True),
-                    "mitre_techniques": unique_mitre  # Validated and deduplicated
+                    "mitre_techniques": rag_mitre  # ONLY RAG techniques, no LLM suggestions
                 }
             else:
                 return self._get_contextual_fallback_with_rag(alert_data)
