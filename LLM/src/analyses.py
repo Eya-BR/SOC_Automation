@@ -51,6 +51,15 @@ class AdvancedAnalyzer:
             # Calculate unified severity (trust Splunk source)
             final_severity = self._calculate_unified_severity(alert_data, llama_analysis, rag_context)
             
+            # ENFORCE consistency - override contradictions
+            if llama_analysis.get("confidence", 0.0) < 0.3:
+                # Low confidence LLM cannot override Splunk severity
+                final_severity = "high"  # Trust Splunk detection
+                llama_analysis["severity"] = final_severity
+                llama_analysis["urgency"] = final_severity
+                llama_analysis["business_impact"] = final_severity
+                llama_analysis["technical_impact"] = final_severity
+            
             # Generate context-aware recommendations (no duplication)
             recommendations = self._generate_contextual_recommendations(alert_data, llama_analysis, observables)
             
@@ -1125,7 +1134,7 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
             account_type = self._detect_account_type(alert_data)
             
             # Build context-aware prompt
-            prompt = f"""Analyze this security alert with context awareness:
+            prompt = f"""Analyze this security alert with strict evidence requirements:
 
 Alert Details:
 - User: {user} ({account_type})
@@ -1133,26 +1142,27 @@ Alert Details:
 - Privilege: {privilege}
 - Alert: {alert_data.get('search_name', 'Unknown')}
 
-Context Rules:
-1. Machine accounts (ending with $) are often legitimate
-2. Domain Controllers (AD01, DC hosts) normally use elevated privileges
-3. SeSecurityPrivilege is used for security log access, backup, monitoring
-4. DO NOT assume "attacker" or "vulnerability" without evidence
-5. Focus on hypothesis and confidence level
-6. MITRE techniques should be suggested but not forced - use "unknown" if unclear
+CRITICAL EVIDENCE RULES:
+1. ONLY use facts from the alert - NO assumptions beyond provided data
+2. NEVER assume "attacker", "vulnerability", or "exploit" without explicit evidence
+3. Machine accounts (ending with $) are often legitimate - do NOT assume malicious intent
+4. SeSecurityPrivilege is used for legitimate system operations - do NOT assume exploitation
+5. If evidence is insufficient, state "insufficient evidence" with low confidence
+6. MITRE techniques: ONLY suggest if strong evidence exists, otherwise use "unknown"
 
-Provide analysis as JSON:
+Required JSON format:
 {{
-    "hypothesis": "Clear statement of what might be happening",
+    "hypothesis": "Clear statement based ONLY on provided evidence",
     "confidence": 0.0-1.0,
-    "context_factors": ["list of relevant context factors"],
+    "evidence_available": true/false,
+    "context_factors": ["list of ONLY observable factors"],
     "legitimate_explanations": ["possible legitimate reasons"],
-    "suspicious_indicators": ["potential suspicious indicators"],
+    "suspicious_indicators": ["potential indicators based on evidence"],
     "requires_investigation": true/false,
-    "mitre_techniques": ["TXXXX" if confident, otherwise "unknown"]
+    "mitre_techniques": ["TXXXX" if strong evidence, otherwise "unknown"]
 }}
 
-Respond ONLY with valid JSON. No explanations."""
+RESPOND ONLY WITH VALID JSON. NO EXPLANATIONS."""
             
             response = self._call_llama3(prompt)
             if response:
@@ -1184,8 +1194,16 @@ Respond ONLY with valid JSON. No explanations."""
                 mitre_suggestions = parsed.get("mitre_techniques", [])
                 validated_mitre = self._validate_llm_suggestions(mitre_suggestions, rag_mitre)
                 
-                # Combine RAG and validated LLM suggestions
+                # COMBINE: Prefer RAG results over LLM hallucinations
                 final_mitre = rag_mitre + validated_mitre
+                
+                # Remove duplicates and limit to top 3
+                seen_ids = set()
+                unique_mitre = []
+                for item in final_mitre:
+                    if item.get("id", "unknown") not in seen_ids and len(unique_mitre) < 3:
+                        seen_ids.add(item.get("id", "unknown"))
+                        unique_mitre.append(item)
                 
                 # Ensure required fields
                 return {
@@ -1195,7 +1213,7 @@ Respond ONLY with valid JSON. No explanations."""
                     "legitimate_explanations": parsed.get("legitimate_explanations", []),
                     "suspicious_indicators": parsed.get("suspicious_indicators", []),
                     "requires_investigation": parsed.get("requires_investigation", True),
-                    "mitre_techniques": final_mitre  # RAG + validated MITRE
+                    "mitre_techniques": unique_mitre  # Validated and deduplicated
                 }
             else:
                 return self._get_contextual_fallback_with_rag(alert_data)
@@ -1212,7 +1230,7 @@ Respond ONLY with valid JSON. No explanations."""
             "legitimate_explanations": ["System maintenance", "Service operations"],
             "suspicious_indicators": ["Unauthorized privilege usage"],
             "requires_investigation": True,
-            "mitre_techniques": []  # Empty until context is provided
+            "mitre_techniques": []  # Will be populated by RAG if needed
         }
     
     def _get_contextual_fallback_with_rag(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1258,8 +1276,8 @@ Respond ONLY with valid JSON. No explanations."""
     
     def _get_contextual_fallback_with_mitre(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
         """Fallback contextual analysis with MITRE mapping"""
-        # Generate context-based MITRE mapping
-        mitre_mapping = generate_mitre_mapping(alert_data=alert_data, llama_suggestions=[])
+        # Generate context-based MITRE mapping (always provide techniques)
+        mitre_mapping = self.mitre_loader.search_mitre_techniques(alert_data)
         
         return {
             "hypothesis": "Privilege usage detected - requires validation",
@@ -1268,7 +1286,7 @@ Respond ONLY with valid JSON. No explanations."""
             "legitimate_explanations": ["System maintenance", "Service operations"],
             "suspicious_indicators": ["Unauthorized privilege usage"],
             "requires_investigation": True,
-            "mitre_techniques": mitre_mapping
+            "mitre_techniques": mitre_mapping  # Always provide relevant techniques from RAG
         }
     
     def _generate_contextual_recommendations(self, alert_data: Dict[str, Any], llama_analysis: Dict, observables: Dict) -> Dict[str, List[str]]:
