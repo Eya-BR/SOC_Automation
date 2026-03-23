@@ -51,7 +51,7 @@ class AdvancedAnalyzer:
             # Calculate unified severity (trust Splunk source)
             final_severity = self._calculate_unified_severity(alert_data, llama_analysis, rag_context)
             
-            # ENFORCE consistency - override contradictions
+            # ENFORCE consistency - unified severity across all fields
             if llama_analysis.get("confidence", 0.0) < 0.3:
                 # Low confidence LLM cannot override Splunk severity
                 final_severity = "high"  # Trust Splunk detection
@@ -59,6 +59,18 @@ class AdvancedAnalyzer:
                 llama_analysis["urgency"] = final_severity
                 llama_analysis["business_impact"] = final_severity
                 llama_analysis["technical_impact"] = final_severity
+            else:
+                # High confidence LLM - use unified severity
+                unified_severity = self._calculate_unified_severity(alert_data, llama_analysis, rag_context)
+                # Apply unified severity to ALL fields
+                llama_analysis["severity"] = unified_severity
+                llama_analysis["urgency"] = unified_severity
+                llama_analysis["business_impact"] = unified_severity
+                llama_analysis["technical_impact"] = unified_severity
+                final_severity = unified_severity
+            
+            # Calculate coherent threat score based on final severity
+            threat_score = self._calculate_coherent_threat_score(final_severity, llama_analysis.get("confidence", 0.0))
             
             # Generate context-aware recommendations (no duplication)
             recommendations = self._generate_contextual_recommendations(alert_data, llama_analysis, observables)
@@ -76,19 +88,6 @@ class AdvancedAnalyzer:
                 "threat_score": llama_analysis.get("confidence", 0.0),
                 "overall_severity": final_severity,
                 "observables": observables,
-                "context_analysis": {
-                    "account_type": self._detect_account_type(alert_data),
-                    "privilege_analysis": self._analyze_privilege_usage(alert_data),
-                    "hypothesis": llama_analysis.get("hypothesis", "Unknown"),
-                    "confidence_level": llama_analysis.get("confidence", 0.0),
-                    "validation_notes": self._generate_validation_notes(alert_data, observables)
-                },
-                "rag_analysis": {
-                    "matches": rag_context,
-                    "total_matches": len(rag_context),
-                    "highest_similarity": max([m.get("similarity", 0) for m in rag_context]) if rag_context else 0,
-                    "collections_searched": list(self.rag_system.collections.keys())
-                },
                 "virustotal_analysis": vt_analysis,
                 "llm_enrichment": llama_analysis,
                 "assessment": {
@@ -113,6 +112,25 @@ class AdvancedAnalyzer:
                 "threat_score": 0.0,
                 "overall_severity": "medium"
             }
+    
+    def _calculate_coherent_threat_score(self, severity: str, confidence: float) -> float:
+        """Calculate coherent threat score based on severity and confidence"""
+        severity_scores = {
+            "low": 0.2,
+            "medium": 0.5, 
+            "high": 0.8,
+            "critical": 1.0
+        }
+        
+        base_score = severity_scores.get(severity.lower(), 0.5)
+        
+        # Adjust based on confidence
+        if confidence >= 0.7:
+            return min(base_score + 0.2, 1.0)
+        elif confidence >= 0.4:
+            return base_score
+        else:
+            return max(base_score - 0.2, 0.1)
     
     def _detect_account_type(self, alert_data: Dict[str, Any]) -> str:
         """Detect if account is machine, human, or service"""

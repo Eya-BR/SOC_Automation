@@ -37,6 +37,7 @@ class MiterRAGLoader:
                         'reason': f"RAG match {i+1} with similarity {results['distances'][i]:.3f}"
                     })
             
+            logger.info(f"MITRE search found {len(techniques)} techniques for query: {query}")
             return techniques
             
         except Exception as e:
