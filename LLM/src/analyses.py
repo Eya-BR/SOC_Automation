@@ -75,6 +75,9 @@ class AdvancedAnalyzer:
             # Generate context-aware recommendations (no duplication)
             recommendations = self._generate_contextual_recommendations(alert_data, llama_analysis, observables)
             
+            # Add recommendations to llama_analysis for consistency
+            llama_analysis["recommendations"] = recommendations
+            
             # Build final analysis (trust Splunk, LLM enriches)
             analysis = {
                 "alert_id": alert_id,
@@ -92,7 +95,6 @@ class AdvancedAnalyzer:
                 "llm_enrichment": {
                     "hypothesis": llama_analysis.get("hypothesis", "Unknown activity"),
                     "confidence": llama_analysis.get("confidence", 0.0),
-                    "mitre_techniques": llama_analysis.get("mitre_techniques", []),
                     "note": self._generate_context_note(alert_data),
                     "recommendations": llama_analysis.get("recommendations", {
                         "immediate_actions": [],
@@ -101,7 +103,6 @@ class AdvancedAnalyzer:
                         "prevention_measures": []
                     })
                 },
-                "mitre_techniques": llama_analysis.get("mitre_techniques", []),
                 "summary": f"Splunk: {alert_data.get('search_name', 'Unknown')} | LLM: {llama_analysis.get('hypothesis', 'Unknown')} | Severity: {final_severity}"
             }
             
@@ -535,68 +536,6 @@ class AdvancedAnalyzer:
             logger.error(f"Llama 3 analysis error: {e}")
             return self._get_fallback_llama3_analysis()
     
-    def _build_enhanced_prompt(self, alert_data: Dict[str, Any], rag_context: List[Dict], vt_analysis: Dict) -> str:
-        """Build enhanced prompt with semantic RAG context"""
-        
-        # Format RAG context
-        rag_text = ""
-        if rag_context:
-            for item in rag_context:
-                rag_text += f"\n[{item['type'].upper()}] {item['document']}"
-                rag_text += f" (Similarity: {item['similarity']:.3f})"
-                if item['metadata'].get('tags'):
-                    rag_text += f" Tags: {', '.join(item['metadata']['tags'])}"
-        
-        # Format VirusTotal results
-        vt_text = ""
-        if vt_analysis.get('malicious_count', 0) > 0:
-            vt_text = f"\n[VIRUSTOTAL] {vt_analysis['malicious_count']} malicious indicators detected"
-            for finding in vt_analysis['malicious_findings']:
-                vt_text += f"\n- {finding['type']}: {finding['value']} ({finding['positives']}/{finding['total']} engines)"
-        
-        prompt = f"""You are an expert cybersecurity analyst using Llama 3 with advanced Retrieval-Augmented Generation (RAG). Analyze this security alert:
-
-ALERT DATA:
-{json.dumps(alert_data, indent=2)}
-
-SEMANTIC KNOWLEDGE (ChromaDB RAG):
-{rag_text}
-
-THREAT INTELLIGENCE (VirusTotal):
-{vt_text}
-
-Use the semantic knowledge and threat intelligence to provide comprehensive analysis in this exact JSON format:
-{{
-    "classification": {{
-        "category": "malware|phishing|brute_force|reconnaissance|lateral_movement|data_exfiltration|persistence|privilege_escalation|legitimate",
-        "severity": "critical|high|medium|low",
-        "confidence": 0.0-1.0,
-        "threat_type": "Brief description of the threat",
-        "attack_patterns": ["Specific attack patterns detected"],
-        "mitre_techniques": ["MITRE ATT&CK techniques matched"]
-    }},
-    "recommendations": {{
-        "immediate_actions": ["Specific immediate actions to take"],
-        "investigation_steps": ["Step-by-step investigation process"],
-        "containment_strategies": ["How to contain the threat"],
-        "prevention_measures": ["How to prevent similar incidents"]
-    }},
-    "risk_assessment": {{
-        "business_impact": "low|medium|high|critical",
-        "technical_impact": "low|medium|high|critical",
-        "urgency": "low|medium|high|critical",
-        "attack_surface": "Attack surface analysis"
-    }},
-    "semantic_analysis": {{
-        "rag_matches": ["Semantic matches from ChromaDB"],
-        "similarity_scores": ["Similarity scores for matches"],
-        "context_understanding": "How well the system understood the context"
-    }}
-}}
-
-IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keyword matching. Focus on attack patterns, relationships, and contextual meaning. Respond ONLY with valid JSON. No explanations, no markdown, just JSON."""
-        return prompt
-    
     def _call_llama3(self, prompt: str) -> str:
         """Call Llama 3 via Ollama"""
         try:
@@ -624,53 +563,7 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
             logger.error(f"Error calling Llama 3: {e}")
             return ""
     
-    def _parse_llama3_response(self, response: str) -> Dict[str, Any]:
-        """Parse Llama 3 response with improved JSON handling"""
-        try:
-            # Clean response
-            response = response.strip()
-            
-            # Try to extract JSON from response
-            if response.startswith('{') and response.endswith('}'):
-                json_str = response
-            else:
-                # Look for JSON in the response
-                start_idx = response.find('{')
-                end_idx = response.rfind('}')
-                
-                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                    json_str = response[start_idx:end_idx + 1]
-                else:
-                    logger.error("No JSON found in Llama 3 response")
-                    return self._get_fallback_llama3_analysis()
-            
-            # Parse JSON with error handling
-            try:
-                parsed = json.loads(json_str)
-                return parsed
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON parsing error: {e}")
-                logger.error(f"Response was: {json_str[:200]}...")
-                
-                # Try to fix common JSON issues
-                try:
-                    # Remove trailing commas
-                    json_str = json_str.replace(',\n}', '\n}').replace(',}', '}')
-                    json_str = json_str.replace(',\n]', '\n]').replace(',]', ']')
-                    
-                    parsed = json.loads(json_str)
-                    logger.info("JSON parsing succeeded after cleanup")
-                    return parsed
-                except:
-                    logger.error("JSON parsing failed even after cleanup")
-                    return self._get_fallback_llama3_analysis()
-            
-        except Exception as e:
-            logger.error(f"Error parsing Llama 3 response: {e}")
-            return self._get_fallback_llama3_analysis()
-    
-    def _get_fallback_llama3_analysis(self) -> Dict[str, Any]:
-        """Fallback analysis when Llama 3 fails"""
+    def _get_contextual_fallback_with_mitre(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "classification": {
                 "category": "unknown",
