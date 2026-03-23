@@ -518,114 +518,19 @@ class AdvancedAnalyzer:
         except Exception as e:
             logger.error(f"VirusTotal hash check error: {e}")
         
-        return None
-    
-    def _analyze_with_llama3(self, alert_data: Dict[str, Any], rag_context: List[Dict], vt_analysis: Dict) -> Dict[str, Any]:
-        """Analyze alert with Llama 3 using enhanced semantic context"""
+        def _detect_account_type(self, alert_data: Dict[str, Any]) -> str:
+        """Detect if account is machine, human, or service"""
         try:
-            # Build enhanced prompt with semantic context
-            prompt = self._build_enhanced_prompt(alert_data, rag_context, vt_analysis)
-            
-            # Call Llama 3
-            response = self._call_llama3(prompt)
-            
-            # Parse response
-            return self._parse_llama3_response(response)
-            
-        except Exception as e:
-            logger.error(f"Llama 3 analysis error: {e}")
-            return self._get_fallback_llama3_analysis()
-    
-    def _call_llama3(self, prompt: str) -> str:
-        """Call Llama 3 via Ollama"""
-        try:
-            url = "http://localhost:11434/api/generate"
-            payload = {
-                "model": "llama3.2",
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.1,
-                    "top_p": 0.9,
-                    "max_tokens": 2000,
-                    "repeat_penalty": 1.1
-                }
-            }
-            
-            response = requests.post(url, json=payload, timeout=60)
-            if response.status_code == 200:
-                return response.json().get("response", "")
+            user = alert_data.get("result", {}).get("user", "")
+            if user.endswith("$"):
+                return "machine_account"
+            elif user.lower().startswith(("svc_", "service_", "mssql_", "iis_")):
+                return "service_account"
             else:
-                logger.error(f"Llama 3 API error: {response.status_code}")
-                return ""
-                
+                return "human_account"
         except Exception as e:
-            logger.error(f"Error calling Llama 3: {e}")
-            return ""
-    
-    def _get_contextual_fallback_with_mitre(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
-        return {
-            "classification": {
-                "category": "unknown",
-                "severity": "medium",
-                "confidence": 0.5,
-                "threat_type": "Unable to classify - Llama 3 unavailable",
-                "attack_patterns": [],
-                "mitre_techniques": []
-            },
-            "recommendations": {
-                'immediate_actions': ['Investigate alert manually', 'Check system logs'],
-                'investigation_steps': ['Review alert details', 'Analyze affected systems'],
-                'containment_strategies': ['Monitor for suspicious activity'],
-                'prevention_measures': ['Update security policies', 'Enhance monitoring']
-            },
-            "risk_assessment": {
-                "business_impact": "medium",
-                "technical_impact": "medium",
-                "urgency": "medium",
-                "attack_surface": "Unknown"
-            },
-            "semantic_analysis": {
-                "rag_matches": [],
-                "similarity_scores": {
-                    "Similarity with ChromaDB knowledge base": 0.0,
-                    "Similarity with VirusTotal threat intelligence": 0.0
-                },
-                "context_understanding": "Basic context analysis completed"
-            }
-        }
-    
-    def _calculate_threat_score(self, rag_context: List[Dict], vt_analysis: Dict, llama_analysis: Dict) -> float:
-        """Calculate overall threat score"""
-        score = 0.0
-        
-        # RAG contribution (30% weight)
-        if rag_context:
-            highest_similarity = max([item.get('similarity', 0) for item in rag_context])
-            score += highest_similarity * 0.3
-        
-        # VirusTotal contribution (40% weight)
-        if vt_analysis.get('status') == 'completed' and vt_analysis['malicious_count'] > 0:
-            vt_score = min(vt_analysis['malicious_count'] * 0.2, 1.0)
-            score += vt_score * 0.4
-        
-        # Llama 3 contribution (30% weight)
-        if llama_analysis.get('classification', {}).get('confidence', 0) > 0:
-            llama_score = llama_analysis['classification']['confidence']
-            score += llama_score * 0.3
-        
-        return min(score, 1.0)
-    
-    def _determine_overall_severity(self, threat_score: float, llama_analysis: Dict, vt_analysis: Dict) -> str:
-        """Determine overall severity"""
-        if threat_score >= 0.8:
-            return 'critical'
-        elif threat_score >= 0.6:
-            return 'high'
-        elif threat_score >= 0.4:
-            return 'medium'
-        else:
-            return 'low'
+            logger.error(f"Error detecting account type: {e}")
+            return "unknown"
     
     def _determine_threat_type(self, rag_context: List[Dict], vt_analysis: Dict, llama_analysis: Dict) -> str:
         """Determine threat type"""
