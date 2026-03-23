@@ -85,18 +85,17 @@ class AdvancedAnalyzer:
                     "source_severity": "high",  # Trust Splunk detection
                     "confidence": 0.9
                 },
-                "threat_score": llama_analysis.get("confidence", 0.0),
+                "threat_score": threat_score,
                 "overall_severity": final_severity,
                 "observables": observables,
                 "virustotal_analysis": vt_analysis,
-                "llm_enrichment": llama_analysis,
-                "assessment": {
-                    "threat_type": llama_analysis.get("hypothesis", "Unknown threat"),
-                    "confidence": final_severity == "high" or final_severity == "critical",
-                    "urgency": final_severity,
-                    "business_impact": final_severity,
-                    "attack_surface": self._calculate_attack_surface(observables)
+                "llm_enrichment": {
+                    "hypothesis": llama_analysis.get("hypothesis", "Unknown activity"),
+                    "confidence": llama_analysis.get("confidence", 0.0),
+                    "mitre_techniques": llama_analysis.get("mitre_techniques", []),
+                    "note": self._generate_context_note(alert_data)
                 },
+                "mitre_techniques": llama_analysis.get("mitre_techniques", []),
                 "recommendations": recommendations,
                 "summary": f"Splunk: {alert_data.get('search_name', 'Unknown')} | LLM: {llama_analysis.get('hypothesis', 'Unknown')} | Severity: {final_severity}"
             }
@@ -112,6 +111,18 @@ class AdvancedAnalyzer:
                 "threat_score": 0.0,
                 "overall_severity": "medium"
             }
+    
+    def _generate_context_note(self, alert_data: Dict[str, Any]) -> str:
+        """Generate context-aware note for analysis"""
+        user = alert_data.get("result", {}).get("user", "")
+        host = alert_data.get("result", {}).get("host", "")
+        
+        if user.endswith("$"):
+            return f"Machine account ({user}) detected, activity may be legitimate"
+        elif "AD" in host or "DC" in host:
+            return f"Domain Controller ({host}) detected, elevated privileges expected"
+        else:
+            return "Human account detected - requires investigation"
     
     def _calculate_coherent_threat_score(self, severity: str, confidence: float) -> float:
         """Calculate coherent threat score based on severity and confidence"""
@@ -1152,7 +1163,7 @@ IMPORTANT: Use the semantic RAG knowledge to provide deeper analysis than keywor
             account_type = self._detect_account_type(alert_data)
             
             # Build context-aware prompt
-            prompt = f"""Analyze this security alert with strict evidence requirements:
+            prompt = f"""Analyze this security alert with STRICT evidence requirements:
 
 Alert Details:
 - User: {user} ({account_type})
@@ -1161,12 +1172,17 @@ Alert Details:
 - Alert: {alert_data.get('search_name', 'Unknown')}
 
 CRITICAL EVIDENCE RULES:
-1. ONLY use facts from the alert - NO assumptions beyond provided data
+1. ONLY use facts from alert - NO assumptions beyond provided data
 2. NEVER assume "attacker", "vulnerability", or "exploit" without explicit evidence
 3. Machine accounts (ending with $) are often legitimate - do NOT assume malicious intent
 4. SeSecurityPrivilege is used for legitimate system operations - do NOT assume exploitation
 5. If evidence is insufficient, state "insufficient evidence" with low confidence
 6. MITRE techniques: ONLY suggest if strong evidence exists, otherwise use "unknown"
+
+Account Type Rules:
+- Machine accounts (ending with $) are legitimate system accounts
+- Domain Controllers (AD01) normally use elevated privileges
+- SeSecurityPrivilege is used for auditing and log management
 
 Required JSON format:
 {{
@@ -1177,7 +1193,7 @@ Required JSON format:
     "legitimate_explanations": ["possible legitimate reasons"],
     "suspicious_indicators": ["potential indicators based on evidence"],
     "requires_investigation": true/false,
-    "mitre_techniques": ["TXXXX" if strong evidence, otherwise "unknown"]
+    "mitre_techniques": ["unknown"]  // Let RAG provide validated techniques
 }}
 
 RESPOND ONLY WITH VALID JSON. NO EXPLANATIONS."""
