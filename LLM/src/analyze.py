@@ -119,11 +119,16 @@ SOC Analysis Guidelines:
 4. Recommendations should be proportional to threat level
 5. For medium alerts: verify and investigate, don't isolate immediately
 
+CRITICAL: You MUST provide a specific, evidence-based hypothesis using the actual alert data above.
+CRITICAL: You MUST mention the user, host, IP, and count in your hypothesis.
+CRITICAL: Do NOT give generic responses like "Analysis completed"
+
 Provide analysis in JSON format:
 {{
-    "hypothesis": "Specific factual description of what happened",
+    "hypothesis": "Specific factual description using the actual user, host, IP, and count from the alert context",
     "confidence": 0.0-1.0,
     "severity": "low|medium|high|critical",
+    "note": "Context-aware assessment of the situation",
     "recommendations": {{
         "immediate_actions": ["action1", "action2"],
         "investigation_steps": ["step1", "step2"],
@@ -131,6 +136,12 @@ Provide analysis in JSON format:
         "prevention_measures": ["measure1", "measure2"]
     }}
 }}
+
+Example of good hypothesis:
+"High-privilege account (Administrator) logon detected on host AD01 from internal IP (172.16.0.40), with multiple logon events observed."
+
+Example of bad hypothesis:
+"Analysis completed" ← This is WRONG - be specific!
 """
             
             # Call the model LLM API - Local Ollama with Llama 3
@@ -300,9 +311,12 @@ Provide analysis in JSON format:
         else:
             return max(base_score - 0.2, 0.1)
     
-    def _extract_observables(self, alert_data: Dict[str, Any]) -> Dict[str, List[str]]:
-        """Extract observables from alert - FIXED with user and host"""
+    def _extract_observables(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract observables from alert - FIXED with user, host, and count"""
         alert_text = str(alert_data).lower()
+        
+        # Get result data for direct extraction
+        result = alert_data.get("result", {})
         
         observables = {
             'ips': self._extract_ips(alert_text),
@@ -313,8 +327,12 @@ Provide analysis in JSON format:
             'commands': self._extract_commands(alert_text),
             'users': self._extract_users(alert_data),  # FIXED: Pass alert_data directly
             'processes': self._extract_processes(alert_text),
-            'hosts': self._extract_hosts(alert_data)  # NEW: Extract hosts
+            'hosts': self._extract_hosts(alert_data),  # NEW: Extract hosts
+            'count': result.get("count", "1")  # NEW: Extract count
         }
+        
+        # Debug logging
+        logger.info(f"Extracted observables: users={observables['users']}, hosts={observables['hosts']}, count={observables['count']}")
         
         return observables
     
