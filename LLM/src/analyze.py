@@ -255,7 +255,11 @@ Provide analysis in this exact JSON format:
         "prevention_measures": ["Tune anomaly detection thresholds if needed", "Improve log enrichment and categorization"]
     }}
 }}
-"""
+""".format(
+    event_count=fields.get('event_count', 'Unknown'),
+    avg_events=fields.get('avg_events', 'Unknown'),
+    threshold=fields.get('threshold', 'Unknown')
+)
     
     def _build_auth_prompt(self, fields: Dict[str, Any]) -> str:
         """Context-aware prompt for authentication alerts"""
