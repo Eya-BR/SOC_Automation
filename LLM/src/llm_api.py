@@ -58,13 +58,24 @@ async def analyze_alert(request: AlertRequest):
     Accepts both wrapped and raw Splunk alert formats
     """
     try:
+        # Debug logging - show what we received
+        logger.info(f"DEBUG: Raw request data: {request}")
+        logger.info(f"DEBUG: Request dict: {request.dict()}")
+        
         # Handle both alert formats
-        if request.alert:
+        if hasattr(request, 'alert') and request.alert:
             # Wrapped format: {"alert": {...}}
             alert_data = request.alert
+            logger.info("DEBUG: Using wrapped alert format")
         else:
             # Raw format: direct Splunk alert fields
             alert_data = request.dict(exclude_unset=True)
+            logger.info("DEBUG: Using raw alert format")
+        
+        # Debug logging - show what we're using
+        logger.info(f"DEBUG: Final alert_data: {alert_data}")
+        logger.info(f"DEBUG: alert_data type: {type(alert_data)}")
+        logger.info(f"DEBUG: alert_data keys: {list(alert_data.keys()) if isinstance(alert_data, dict) else 'Not a dict'}")
         
         # Extract alert ID for logging
         alert_id = alert_data.get('sid', alert_data.get('_id', 'unknown'))
