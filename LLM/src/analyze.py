@@ -37,6 +37,9 @@ class Analyzer:
             # Model LLM analysis with contextual recommendations
             llama_analysis = self._analyze_with_model_llm(alert_data)
             
+            # Get MITRE techniques
+            rag_mitre = self.mitre_loader.search_techniques(alert_data)
+            
             # REMOVED: contradictory threat_score and overall_severity
             # Let LLM decide severity completely
             
