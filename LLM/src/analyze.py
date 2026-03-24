@@ -323,7 +323,7 @@ Generic security analysis...
             return self._parse_llm_response(response_text)
         else:
             logger.error(f"Ollama API error: {response.status_code}")
-            return self._get_fallback_analysis({})
+            return self._get_fallback_analysis(alert_data)
     
     def _is_private_ip(self, ip: str) -> bool:
         """Check if IP is in private ranges"""
@@ -366,7 +366,7 @@ Generic security analysis...
                     "hypothesis": parsed.get("hypothesis", "Activity detected"),
                     "confidence": float(parsed.get("confidence", 0.5)),
                     "severity": parsed.get("severity", "medium"),
-                    "recommendations": parsed.get("recommendations", self._get_fallback_recommendations({}))
+                    "recommendations": parsed.get("recommendations", self._get_fallback_recommendations(alert_data))
                 }
             else:
                 # Fallback: extract from text
