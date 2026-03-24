@@ -118,6 +118,10 @@ SOC Analysis Guidelines:
 3. Account for count: multiple logons = higher severity
 4. Recommendations should be proportional to threat level
 5. For medium alerts: verify and investigate, don't isolate immediately
+6. CRITICAL: Adjust severity based on context:
+   - Internal IP + known admin account = medium (not critical)
+   - Domain Controller host = avoid isolation recommendations
+   - External IP or unknown account = higher severity
 
 CRITICAL: You MUST provide a specific, evidence-based hypothesis using the ACTUAL alert data provided above.
 CRITICAL: You MUST mention the actual user "{user}", host "{host}", IP "{src_ip}", and count "{count}" from the alert context.
@@ -128,13 +132,17 @@ CRITICAL: If count > 1, mention "multiple logons" or "repeated attempts"
 CRITICAL: If user is "Administrator", mention "privileged account" or "admin account"
 CRITICAL: If host contains "AD01" or "DC", mention "Domain Controller"
 CRITICAL: If IP is internal, mention "internal network" not "external"
+CRITICAL: SEVERITY LOGIC: 
+   - If internal IP AND known admin account: severity = "medium"
+   - If external IP OR unknown account: severity = "high" or "critical"
+   - If Domain Controller host: avoid isolation recommendations
 
 Provide analysis in JSON format:
 {{
     "hypothesis": "Specific description using EXACT alert data: user={user}, host={host}, src_ip={src_ip}, count={count}",
     "confidence": 0.0-1.0,
     "severity": "low|medium|high|critical",
-    "note": "Analysis based on actual alert data with count consideration",
+    "note": "Analysis based on actual alert data with count consideration and context-aware severity",
     "recommendations": {{
         "immediate_actions": ["action1", "action2"],
         "investigation_steps": ["step1", "step2"],
@@ -146,8 +154,15 @@ Provide analysis in JSON format:
 Example of good hypothesis for YOUR alert:
 "High-privilege account (Administrator) logon detected on Domain Controller (AD01) from internal IP (172.16.0.40), with multiple logon events observed (count: 3)."
 
+Example of good severity assignment:
+- Internal IP + Administrator account + Domain Controller = "medium" (legitimate admin activity)
+- External IP + unknown account = "critical" (potential compromise)
+
 Example of bad hypothesis:
 "Standard user account (User: User123) attempted to logon..." ← This is WRONG - use actual data!
+
+Example of dangerous containment:
+"Isolate the host (AD01)" ← This is WRONG - never isolate Domain Controllers!
 """
             
             # Call the model LLM API - Local Ollama with Llama 3
