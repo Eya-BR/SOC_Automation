@@ -119,16 +119,22 @@ SOC Analysis Guidelines:
 4. Recommendations should be proportional to threat level
 5. For medium alerts: verify and investigate, don't isolate immediately
 
-CRITICAL: You MUST provide a specific, evidence-based hypothesis using the actual alert data above.
-CRITICAL: You MUST mention the user, host, IP, and count in your hypothesis.
-CRITICAL: Do NOT give generic responses like "Analysis completed"
+CRITICAL: You MUST provide a specific, evidence-based hypothesis using the ACTUAL alert data provided above.
+CRITICAL: You MUST mention the actual user "{user}", host "{host}", IP "{src_ip}", and count "{count}" from the alert context.
+CRITICAL: Do NOT give generic responses like "Analysis completed" or make up values.
+CRITICAL: Your hypothesis MUST be based on the actual alert data, not fabricated information.
+CRITICAL: Use the exact values: user={user}, host={host}, src_ip={src_ip}, count={count}
+CRITICAL: If count > 1, mention "multiple logons" or "repeated attempts"
+CRITICAL: If user is "Administrator", mention "privileged account" or "admin account"
+CRITICAL: If host contains "AD01" or "DC", mention "Domain Controller"
+CRITICAL: If IP is internal, mention "internal network" not "external"
 
 Provide analysis in JSON format:
 {{
-    "hypothesis": "Specific factual description using the actual user, host, IP, and count from the alert context",
+    "hypothesis": "Specific description using EXACT alert data: user={user}, host={host}, src_ip={src_ip}, count={count}",
     "confidence": 0.0-1.0,
     "severity": "low|medium|high|critical",
-    "note": "Context-aware assessment of the situation",
+    "note": "Analysis based on actual alert data with count consideration",
     "recommendations": {{
         "immediate_actions": ["action1", "action2"],
         "investigation_steps": ["step1", "step2"],
@@ -137,11 +143,11 @@ Provide analysis in JSON format:
     }}
 }}
 
-Example of good hypothesis:
-"High-privilege account (Administrator) logon detected on host AD01 from internal IP (172.16.0.40), with multiple logon events observed."
+Example of good hypothesis for YOUR alert:
+"High-privilege account (Administrator) logon detected on Domain Controller (AD01) from internal IP (172.16.0.40), with multiple logon events observed (count: 3)."
 
 Example of bad hypothesis:
-"Analysis completed" ← This is WRONG - be specific!
+"Standard user account (User: User123) attempted to logon..." ← This is WRONG - use actual data!
 """
             
             # Call the model LLM API - Local Ollama with Llama 3

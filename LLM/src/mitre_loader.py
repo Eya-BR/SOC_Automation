@@ -109,17 +109,37 @@ class MITRELoader:
         if user.endswith("$"):
             query_parts.extend(["machine account", "service account"])
         
-        return " ".join(query_parts)
+        # Add IP-based keywords
+        if src_ip:
+            query_parts.extend(["network", "access", "connection"])
+        
+        # Add host-based keywords
+        if host:
+            if "dc" in host.lower() or "ad" in host.lower():
+                query_parts.extend(["domain controller", "active directory"])
+        
+        query = " ".join(query_parts)
+        
+        # Debug logging
+        logger.info(f"MITRE search query: '{query}' from user='{user}', host='{host}', alert='{alert_name}'")
+        
+        return query
     
     def _calculate_relevance(self, query: str, technique: Dict[str, Any]) -> float:
         """Calculate relevance score between query and technique"""
         score = 0.0
         query_lower = query.lower()
         
+        # Debug logging for this technique
+        technique_name = technique.get('name', '').lower()
+        technique_tactics = [tactic.lower() for tactic in technique.get('tactics', [])]
+        
         # Check name match
         name = technique.get('name', '').lower()
-        if any(word in name for word in query_lower.split() if len(word) > 2):
+        name_match = any(word in name for word in query_lower.split() if len(word) > 2)
+        if name_match:
             score += 0.5
+            logger.debug(f"  Name match: '{technique_name}' contains words from query")
         
         # Check description match
         description = technique.get('description', '').lower()
@@ -127,18 +147,21 @@ class MITRELoader:
         matches = sum(1 for word in query_lower.split() if word in desc_words)
         if matches > 0:
             score += matches * 0.1
+            logger.debug(f"  Description match: {matches} words in description")
         
         # Check tactics match
-        tactics = [tactic.lower() for tactic in technique.get('tactics', [])]
-        if any(tactic in query_lower for tactic in tactics):
+        if any(tactic in query_lower for tactic in technique_tactics):
             score += 0.3
+            logger.debug(f"  Tactics match: {technique_tactics} contains query tactics")
         
         # Check detection methods match
         detection_methods = [dm.lower() for dm in technique.get('detection_methods', [])]
         if any(dm in query_lower for dm in detection_methods):
             score += 0.2
+            logger.debug(f"  Detection methods match: found relevant method")
         
-        # Cap score at 1.0
+        logger.debug(f"  Final score for '{technique_name}': {score}")
+        
         return min(score, 1.0)
     
     def _get_match_reason(self, query: str, technique: Dict[str, Any]) -> str:
