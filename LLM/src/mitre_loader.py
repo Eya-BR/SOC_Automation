@@ -78,7 +78,7 @@ class MITRELoader:
             return []
     
     def _build_search_query(self, alert_data: Dict[str, Any]) -> str:
-        """Build search query from alert data - ENHANCED with context awareness"""
+        """Build search query from alert data"""
         query_parts = []
         
         # Extract key information
@@ -89,7 +89,7 @@ class MITRELoader:
         src_ip = result.get("src_ip", "")
         alert_name = alert_data.get("search_name", "")
         
-        # Build query parts with CONTEXT
+        # Build query parts
         if user:
             query_parts.append(user)
         if host:
@@ -99,31 +99,24 @@ class MITRELoader:
         if alert_name:
             query_parts.append(alert_name)
         
-        # Add CONTEXTUAL keywords based on ALERT TYPE and BEHAVIOR
-        alert_lower = alert_name.lower()
-        result_lower = str(result).lower()
+        # Add context keywords
+        if "privilege" in alert_name.lower():
+            query_parts.extend(["privilege escalation", "elevation of privilege"])
+        if "logon" in alert_name.lower():
+            query_parts.extend(["logon", "authentication", "valid accounts"])
+        if "admin" in user.lower():
+            query_parts.extend(["administrator", "privileged account"])
+        if user.endswith("$"):
+            query_parts.extend(["machine account", "service account"])
         
-        # HIGH PRIVILEGE ACCOUNT LOGON - specific mapping
-        if "privilege" in alert_lower and "logon" in alert_lower:
-            if "administrator" in result_lower:
-                query_parts.extend(["privileged account logon", "valid accounts", "authentication"])
-            else:
-                query_parts.extend(["account logon", "authentication"])
+        # Add IP-based keywords
+        if src_ip:
+            query_parts.extend(["network", "access", "connection"])
         
-        # MULTIPLE LOGONS - indicate potential issues
-        count = int(result.get("count", "1"))
-        if count > 1:
-            query_parts.extend(["multiple logons", "repeated attempts", "brute force"])
-        
-        # DOMAIN CONTROLLER context
-        if "dc" in host.lower() or "ad01" in host.lower():
-            query_parts.extend(["domain controller", "active directory", "authentication"])
-        
-        # INTERNAL vs EXTERNAL IP context
-        if src_ip and self._is_private_ip(src_ip):
-            query_parts.extend(["internal network", "trusted access"])
-        else:
-            query_parts.extend(["external access", "untrusted network"])
+        # Add host-based keywords
+        if host:
+            if "dc" in host.lower() or "ad" in host.lower():
+                query_parts.extend(["domain controller", "active directory"])
         
         query = " ".join(query_parts)
         

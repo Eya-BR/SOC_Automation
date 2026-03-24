@@ -37,8 +37,8 @@ class Analyzer:
             # Model LLM analysis with contextual recommendations
             llama_analysis = self._analyze_with_model_llm(alert_data)
             
-            # Get MITRE techniques (handled by enhanced analysis with gating)
-            # rag_mitre = self.mitre_loader.search_techniques(alert_data)  # REMOVED - now handled in _analyze_with_model_llm
+            # Get MITRE techniques
+            rag_mitre = self.mitre_loader.search_techniques(alert_data)
             
             # REMOVED: contradictory threat_score and overall_severity
             # Let LLM decide severity completely
@@ -63,7 +63,7 @@ class Analyzer:
                     "hypothesis": llama_analysis.get("hypothesis", "Activity detected"),
                     "confidence": llama_analysis.get("confidence", 0.0),
                     "severity": llama_analysis.get("severity", "medium"),  # LLM decides severity
-                    "mitre_techniques": llama_analysis.get("mitre_techniques", []),  # Uses enhanced analysis with MITRE gating
+                    "mitre_techniques": rag_mitre,
                     "recommendations": recommendations
                 },
                 "summary": f"Splunk: {alert_data.get('search_name', 'Unknown')} | LLM: {llama_analysis.get('hypothesis', 'Unknown')} | Severity: {llama_analysis.get('severity', 'medium')}"
@@ -77,256 +77,103 @@ class Analyzer:
                 "analysis_timestamp": datetime.now().isoformat()
             }
     
-    def _classify_alert_type(self, alert_data: Dict[str, Any]) -> str:
-        """Pre-LLM intelligence layer - Classify alert type"""
-        alert_name = alert_data.get("search_name", "").lower()
-        result = alert_data.get("result", {})
-        
-        # Authentication/Authorization alerts
-        if any(keyword in alert_name for keyword in ["logon", "login", "privilege", "account", "auth"]):
-            return "auth_alert"
-        
-        # Anomaly/Volume alerts
-        elif any(keyword in alert_name for keyword in ["anomalous", "volume", "spike", "threshold", "unusual"]):
-            return "anomaly_alert"
-        
-        # Malware/Threat alerts
-        elif any(keyword in alert_name for keyword in ["malware", "virus", "trojan", "threat", "detection"]):
-            return "malware_alert"
-        
-        # Network security alerts
-        elif any(keyword in alert_name for keyword in ["fortigate", "firewall", "network", "traffic", "block", "deny"]):
-            return "network_alert"
-        
-        # Default classification
-        else:
-            return "generic_alert"
-    
-    def _validate_and_extract_fields(self, alert_data: Dict[str, Any], alert_type: str) -> Dict[str, Any]:
-        """Pre-LLM intelligence layer - Field validation and extraction"""
-        result = alert_data.get("result", {})
-        extracted_fields = {}
-        
-        if alert_type == "auth_alert":
-            extracted_fields = {
-                "user": result.get("user", ""),
-                "host": result.get("host", ""),
-                "src_ip": result.get("src_ip", ""),
-                "count": result.get("count", "1"),
-                "privilege": result.get("Privileges", "")
-            }
-            
-        elif alert_type == "anomaly_alert":
-            extracted_fields = {
-                "device": result.get("devname", ""),
-                "event_count": result.get("event_count", ""),
-                "avg_events": result.get("avg_events", ""),
-                "threshold": result.get("threshold", ""),
-                "std_dev": result.get("std_dev", ""),
-                "description": result.get("description", ""),
-                "severity": result.get("severity", "")
-            }
-            
-        elif alert_type == "network_alert":
-            extracted_fields = {
-                "device": result.get("devname", ""),
-                "src_ip": result.get("src_ip", ""),
-                "dst_ip": result.get("dst_ip", ""),
-                "port": result.get("port", ""),
-                "protocol": result.get("protocol", ""),
-                "action": result.get("action", "")
-            }
-            
-        elif alert_type == "malware_alert":
-            extracted_fields = {
-                "file_hash": result.get("hash", ""),
-                "file_name": result.get("filename", ""),
-                "file_path": result.get("filepath", ""),
-                "detection_name": result.get("detection", ""),
-                "severity": result.get("severity", "")
-            }
-            
-        else:  # generic_alert
-            extracted_fields = {
-                "description": result.get("description", ""),
-                "severity": result.get("severity", ""),
-                "details": result
-            }
-        
-        # Field validation
-        missing_fields = [k for k, v in extracted_fields.items() if not v]
-        extracted_fields["missing_fields"] = missing_fields
-        extracted_fields["data_completeness"] = len(missing_fields) == 0
-        
-        return extracted_fields
-    
-    def _should_include_mitre(self, alert_type: str, extracted_fields: Dict[str, Any]) -> bool:
-        """Pre-LLM intelligence layer - MITRE gating logic"""
-        
-        # Only include MITRE for alerts that indicate actual attack behavior
-        if alert_type == "auth_alert":
-            # Include MITRE for authentication alerts (potential compromise)
-            return True
-            
-        elif alert_type == "anomaly_alert":
-            # Do NOT include MITRE for volume anomalies (not attack behavior)
-            return False
-            
-        elif alert_type == "network_alert":
-            # Include MITRE for network security alerts (potential attacks)
-            return extracted_fields.get("action") in ["block", "deny", "alert"]
-            
-        elif alert_type == "malware_alert":
-            # Include MITRE for malware detections (clear attack behavior)
-            return True
-            
-        else:
-            # Default: include MITRE for generic alerts
-            return True
-    
     def _analyze_with_model_llm(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Context-aware SOC reasoning engine with LLM - ENHANCED with pre-LLM intelligence"""
+        """Analyze using model LLM for contextual recommendations - FIXED with count consideration"""
         try:
-            # Step 1: Alert type classification
-            alert_type = self._classify_alert_type(alert_data)
-            logger.info(f"Alert classified as: {alert_type}")
+            # Prepare context for the model
+            user = alert_data.get("result", {}).get("user", "")
+            host = alert_data.get("result", {}).get("host", "")
+            src_ip = alert_data.get("result", {}).get("src_ip", "")
+            count = alert_data.get("result", {}).get("count", "1")
+            privilege = alert_data.get("result", {}).get("Privileges", "")
+            alert_name = alert_data.get("search_name", "Unknown")
             
-            # Step 2: Field validation and extraction
-            extracted_fields = self._validate_and_extract_fields(alert_data, alert_type)
-            logger.info(f"Extracted fields: {extracted_fields}")
-            
-            # Step 3: MITRE gating decision
-            include_mitre = self._should_include_mitre(alert_type, extracted_fields)
-            logger.info(f"MITRE inclusion: {include_mitre}")
-            
-            # Step 4: Context-aware prompting based on alert type
-            if alert_type == "anomaly_alert":
-                context_prompt = self._build_anomaly_prompt(extracted_fields)
-            elif alert_type == "auth_alert":
-                context_prompt = self._build_auth_prompt(extracted_fields)
-            elif alert_type == "network_alert":
-                context_prompt = self._build_network_prompt(extracted_fields)
-            elif alert_type == "malware_alert":
-                context_prompt = self._build_malware_prompt(extracted_fields)
-            else:
-                context_prompt = self._build_generic_prompt(extracted_fields)
-            
-            # Step 5: LLM analysis
-            llama_analysis = self._call_llm(context_prompt)
-            
-            # Step 6: Post-processing with MITRE gating
-            if not include_mitre:
-                llama_analysis["mitre_techniques"] = []
-                llama_analysis["note"] = "Volume anomaly - no specific attack behavior detected"
-            
-            return llama_analysis
-            
-        except Exception as e:
-            logger.error(f"Error in enhanced analysis: {e}")
-            return self._get_fallback_analysis(alert_data)
-    
-    def _build_anomaly_prompt(self, fields: Dict[str, Any]) -> str:
-        """Context-aware prompt for anomaly alerts"""
-        return f"""
-Alert Context - Volume Anomaly Detection:
-- Device: {fields.get('device', 'Unknown')}
-- Event Count: {fields.get('event_count', 'Unknown')}
-- Average Events: {fields.get('avg_events', 'Unknown')}
-- Threshold: {fields.get('threshold', 'Unknown')}
-- Description: {fields.get('description', '')}
+            # Build context prompt for model - FIXED with better SOC logic
+            context_prompt = f"""
+You are a senior SOC analyst analyzing a security alert.
+
+Alert Context:
+- User: {user}
+- Host: {host}
+- Source IP: {src_ip}
+- Attempt Count: {count}
+- Privilege: {privilege}
+- Alert Type: {alert_name}
+
+Account Analysis:
+- Machine Account: {user.endswith("$")}
+- Domain Controller: {"DC" in host.upper() or "AD01" in host}
+- Administrator Account: {"admin" in user.lower() or "administrator" in user.lower()}
+- Internal IP: {self._is_private_ip(src_ip)}
+
+Critical Assessment:
+- Count of attempts: {count} ({"CRITICAL: Multiple logons - potential brute force or lateral movement" if int(count) > 1 else "Single logon - normal activity"})
+- IP Type: {"Internal network traffic" if self._is_private_ip(src_ip) else "External IP - higher suspicion"}
+- Account Type: {"High-privilege administrator account" if "admin" in user.lower() else "Standard user account"}
+- Host Type: {"Domain Controller - high-value target" if "DC" in host.upper() or "AD01" in host else "Standard server"}
 
 SOC Analysis Guidelines:
-1. This is a VOLUME ANOMALY, not an attack alert
-2. Focus on event patterns and baseline comparison
-3. Do NOT mention users, logons, or authentication
-4. Do NOT recommend MFA or account security measures
-5. Focus on network device behavior and traffic analysis
+1. Be factual and specific - use actual values, not "unknown"
+2. Consider context: internal IPs are less suspicious than external
+3. Account for count: multiple logons = higher severity
+4. Recommendations should be proportional to threat level
+5. For medium alerts: verify and investigate, don't isolate immediately
 
-Provide analysis in this exact JSON format:
+CRITICAL: You MUST provide a specific, evidence-based hypothesis using the ACTUAL alert data provided above.
+CRITICAL: You MUST mention the actual user "{user}", host "{host}", IP "{src_ip}", and count "{count}" from the alert context.
+CRITICAL: Do NOT give generic responses like "Analysis completed" or make up values.
+CRITICAL: Your hypothesis MUST be based on the actual alert data, not fabricated information.
+CRITICAL: Use the exact values: user={user}, host={host}, src_ip={src_ip}, count={count}
+CRITICAL: If count > 1, mention "multiple logons" or "repeated attempts"
+CRITICAL: If user is "Administrator", mention "privileged account" or "admin account"
+CRITICAL: If host contains "AD01" or "DC", mention "Domain Controller"
+CRITICAL: If IP is internal, mention "internal network" not "external"
+
+Provide analysis in JSON format:
 {{
-    "hypothesis": "FortiGate detected a significant increase in event volume ({event_count} events) exceeding the baseline average ({avg_events}) and threshold ({threshold}). This indicates a potential anomaly in network activity.",
+    "hypothesis": "Specific description using EXACT alert data: user={user}, host={host}, src_ip={src_ip}, count={count}",
     "confidence": 0.0-1.0,
     "severity": "low|medium|high|critical",
-    "note": "The alert does not specify the type of events. Additional log analysis is required to determine if this is benign or malicious.",
+    "note": "Analysis based on actual alert data with count consideration",
     "recommendations": {{
-        "immediate_actions": ["Review FortiGate logs to identify event types", "Check if the spike is expected (maintenance or scanning activity)"],
-        "investigation_steps": ["Identify top source and destination IPs", "Analyze event categories (deny, allow, IPS)", "Correlate with other security alerts"],
-        "containment_strategies": [],
-        "prevention_measures": ["Tune anomaly detection thresholds if needed", "Improve log enrichment and categorization"]
+        "immediate_actions": ["action1", "action2"],
+        "investigation_steps": ["step1", "step2"],
+        "containment_strategies": ["strategy1"],
+        "prevention_measures": ["measure1", "measure2"]
     }}
 }}
-""".format(
-    event_count=fields.get('event_count', 'Unknown'),
-    avg_events=fields.get('avg_events', 'Unknown'),
-    threshold=fields.get('threshold', 'Unknown')
-)
-    
-    def _build_auth_prompt(self, fields: Dict[str, Any]) -> str:
-        """Context-aware prompt for authentication alerts"""
-        return f"""
-Alert Context - Authentication Activity:
-- User: {fields.get('user', '')}
-- Host: {fields.get('host', '')}
-- Source IP: {fields.get('src_ip', '')}
-- Count: {fields.get('count', '1')}
-- Privilege: {fields.get('privilege', '')}
 
-Standard SOC analysis for authentication events...
-"""
-    
-    def _build_network_prompt(self, fields: Dict[str, Any]) -> str:
-        """Context-aware prompt for network security alerts"""
-        return f"""
-Alert Context - Network Security:
-- Device: {fields.get('device', '')}
-- Action: {fields.get('action', '')}
-- Source IP: {fields.get('src_ip', '')}
-- Destination IP: {fields.get('dst_ip', '')}
+Example of good hypothesis for YOUR alert:
+"High-privilege account (Administrator) logon detected on Domain Controller (AD01) from internal IP (172.16.0.40), with multiple logon events observed (count: 3)."
 
-Network security analysis...
+Example of bad hypothesis:
+"Standard user account (User: User123) attempted to logon..." ← This is WRONG - use actual data!
 """
-    
-    def _build_malware_prompt(self, fields: Dict[str, Any]) -> str:
-        """Context-aware prompt for malware alerts"""
-        return f"""
-Alert Context - Malware Detection:
-- File Hash: {fields.get('file_hash', '')}
-- File Name: {fields.get('file_name', '')}
-- Detection: {fields.get('detection_name', '')}
-
-Malware analysis...
-"""
-    
-    def _build_generic_prompt(self, fields: Dict[str, Any]) -> str:
-        """Context-aware prompt for generic alerts"""
-        return f"""
-Alert Context - Generic Security Event:
-- Details: {fields.get('details', {})}
-
-Generic security analysis...
-"""
-    
-    def _call_llm(self, prompt: str) -> Dict[str, Any]:
-        """Call LLM with context-aware prompt"""
-        url = "http://localhost:11434/api/generate"
-        payload = {
-            "model": "llama3.2",
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.7,
-                "top_p": 0.9,
-                "max_tokens": 500
+            
+            # Call the model LLM API - Local Ollama with Llama 3
+            url = "http://localhost:11434/api/generate"
+            payload = {
+                "model": "llama3.2",
+                "prompt": context_prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.7,
+                    "top_p": 0.9,
+                    "max_tokens": 500
+                }
             }
-        }
-        
-        response = requests.post(url, json=payload, timeout=60)
-        if response.status_code == 200:
-            result = response.json()
-            response_text = result.get("response", "")
-            return self._parse_llm_response(response_text)
-        else:
-            logger.error(f"Ollama API error: {response.status_code}")
+            
+            response = requests.post(url, json=payload, timeout=60)
+            if response.status_code == 200:
+                result = response.json()
+                response_text = result.get("response", "")
+                return self._parse_llm_response(response_text)
+            else:
+                logger.error(f"Ollama API error: {response.status_code}")
+                return self._get_fallback_analysis(alert_data)
+                
+        except Exception as e:
+            logger.error(f"Error calling Ollama: {e}")
             return self._get_fallback_analysis(alert_data)
     
     def _is_private_ip(self, ip: str) -> bool:
@@ -370,7 +217,7 @@ Generic security analysis...
                     "hypothesis": parsed.get("hypothesis", "Activity detected"),
                     "confidence": float(parsed.get("confidence", 0.5)),
                     "severity": parsed.get("severity", "medium"),
-                    "recommendations": parsed.get("recommendations", self._get_fallback_recommendations(alert_data))
+                    "recommendations": parsed.get("recommendations", self._get_fallback_recommendations({}))
                 }
             else:
                 # Fallback: extract from text
@@ -476,32 +323,29 @@ Generic security analysis...
         
         # Get result data for direct extraction
         result = alert_data.get("result", {})
-      # Extract observables with enhanced FortiGate support
+        
         observables = {
-            "ips": self._extract_ips(alert_data),
-            "domains": self._extract_domains(str(alert_data)),
-            "hashes": self._extract_hashes(str(alert_data)),
-            "urls": self._extract_urls(str(alert_data)),
-            "file_paths": self._extract_file_paths(str(alert_data)),
-            "commands": self._extract_commands(str(alert_data)),
-            "users": self._extract_users(alert_data),
-            "processes": self._extract_processes(str(alert_data)),
-            "hosts": self._extract_hosts(alert_data),
-            "devices": self._extract_devices(alert_data),  # NEW: Device extraction
-            "event_counts": self._extract_event_counts(alert_data),  # NEW: Event statistics
-            "count": str(alert_data.get("result", {}).get("count", "1"))
+            'ips': self._extract_ips(alert_text),
+            'domains': self._extract_domains(alert_text),
+            'hashes': self._extract_hashes(alert_text),
+            'urls': self._extract_urls(alert_text),
+            'file_paths': self._extract_file_paths(alert_text),
+            'commands': self._extract_commands(alert_text),
+            'users': self._extract_users(alert_data),  # FIXED: Pass alert_data directly
+            'processes': self._extract_processes(alert_text),
+            'hosts': self._extract_hosts(alert_data),  # NEW: Extract hosts
+            'count': result.get("count", "1")  # NEW: Extract count
         }
         
         # Debug logging
-        logger.info(f"Extracted observables: users={observables['users']}, hosts={observables['hosts']}, devices={observables['devices']}, event_counts={observables['event_counts']}, count={observables['count']}")
+        logger.info(f"Extracted observables: users={observables['users']}, hosts={observables['hosts']}, count={observables['count']}")
         
         return observables
     
-    def _extract_ips(self, alert_data: Dict[str, Any]) -> List[str]:
+    def _extract_ips(self, text: str) -> List[str]:
         """Extract IP addresses"""
-        alert_text = str(alert_data).lower()
         ip_pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
-        matches = re.findall(ip_pattern, alert_text)
+        matches = re.findall(ip_pattern, text)
         valid_ips = []
         
         for ip in matches:
@@ -586,61 +430,6 @@ Generic security analysis...
             users.extend(matches)
         
         return list(set(users))
-    
-    def _extract_devices(self, alert_data: Dict[str, Any]) -> List[str]:
-        """Extract device names - NEW function for network devices"""
-        devices = []
-        
-        # Get device from result field
-        result = alert_data.get("result", {})
-        device = result.get("devname", "")
-        if device:
-            devices.append(device)
-        
-        # Also try extraction from text as fallback
-        alert_text = str(alert_data).lower()
-        device_patterns = [
-            r'device[:\s]+["\']?([a-zA-Z0-9\-\.]+)["\']?',
-            r'devname[:\s]+["\']?([a-zA-Z0-9\-\.]+)["\']?',
-            r'fortigate[-\s]*([a-zA-Z0-9\-\.]+)',
-            r'([a-zA-Z0-9\-\.]+fortigate)',
-            r'([a-zA-Z0-9\-\.]+-firewall)',
-            r'([a-zA-Z0-9\-\.]+-fw)'
-        ]
-        
-        for pattern in device_patterns:
-            matches = re.findall(pattern, alert_text, re.IGNORECASE)
-            devices.extend(matches)
-        
-        return list(set(devices))
-    
-    def _extract_event_counts(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract event counts and statistics - NEW function for volume anomalies"""
-        result = alert_data.get("result", {})
-        event_data = {}
-        
-        # Extract event-related fields
-        event_count = result.get("event_count", "")
-        avg_events = result.get("avg_events", "")
-        std_dev = result.get("std_dev", "")
-        threshold = result.get("threshold", "")
-        severity = result.get("severity", "")
-        description = result.get("description", "")
-        
-        if event_count:
-            event_data["event_count"] = event_count
-        if avg_events:
-            event_data["avg_events"] = avg_events
-        if std_dev:
-            event_data["std_dev"] = std_dev
-        if threshold:
-            event_data["threshold"] = threshold
-        if severity:
-            event_data["severity"] = severity
-        if description:
-            event_data["description"] = description
-        
-        return event_data
     
     def _extract_hosts(self, alert_data: Dict[str, Any]) -> List[str]:
         """Extract host names - NEW function"""
