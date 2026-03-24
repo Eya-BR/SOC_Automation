@@ -71,11 +71,22 @@ async def analyze_alert(request: AlertRequest):
             # Raw format: direct Splunk alert fields
             alert_data = request.dict(exclude_unset=True)
             logger.info("DEBUG: Using raw alert format")
+            
+            # Check if data is nested in 'json' key
+            if 'json' in alert_data and isinstance(alert_data['json'], dict):
+                logger.info("DEBUG: Found nested json key, extracting data")
+                alert_data = alert_data['json']
         
         # Debug logging - show what we're using
         logger.info(f"DEBUG: Final alert_data: {alert_data}")
         logger.info(f"DEBUG: alert_data type: {type(alert_data)}")
         logger.info(f"DEBUG: alert_data keys: {list(alert_data.keys()) if isinstance(alert_data, dict) else 'Not a dict'}")
+        
+        # Check if result field exists
+        if isinstance(alert_data, dict) and 'result' in alert_data:
+            logger.info(f"DEBUG: Found result field: {alert_data['result']}")
+        else:
+            logger.warning("DEBUG: No result field found in alert_data!")
         
         # Extract alert ID for logging
         alert_id = alert_data.get('sid', alert_data.get('_id', 'unknown'))
