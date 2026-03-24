@@ -37,8 +37,8 @@ class Analyzer:
             # Model LLM analysis with contextual recommendations
             llama_analysis = self._analyze_with_model_llm(alert_data)
             
-            # Get MITRE techniques
-            rag_mitre = self.mitre_loader.search_techniques(alert_data)
+            # Get MITRE techniques (handled by enhanced analysis with gating)
+            # rag_mitre = self.mitre_loader.search_techniques(alert_data)  # REMOVED - now handled in _analyze_with_model_llm
             
             # REMOVED: contradictory threat_score and overall_severity
             # Let LLM decide severity completely
@@ -63,7 +63,7 @@ class Analyzer:
                     "hypothesis": llama_analysis.get("hypothesis", "Activity detected"),
                     "confidence": llama_analysis.get("confidence", 0.0),
                     "severity": llama_analysis.get("severity", "medium"),  # LLM decides severity
-                    "mitre_techniques": rag_mitre,
+                    "mitre_techniques": llama_analysis.get("mitre_techniques", []),  # Uses enhanced analysis with MITRE gating
                     "recommendations": recommendations
                 },
                 "summary": f"Splunk: {alert_data.get('search_name', 'Unknown')} | LLM: {llama_analysis.get('hypothesis', 'Unknown')} | Severity: {llama_analysis.get('severity', 'medium')}"
@@ -475,10 +475,10 @@ Generic security analysis...
       # Extract observables with enhanced FortiGate support
         observables = {
             "ips": self._extract_ips(alert_data),
-            "domains": self._extract_domains(alert_data),
-            "hashes": self._extract_hashes(alert_data),
-            "urls": self._extract_urls(alert_data),
-            "file_paths": self._extract_file_paths(alert_data),
+            "domains": self._extract_domains(str(alert_data)),
+            "hashes": self._extract_hashes(str(alert_data)),
+            "urls": self._extract_urls(str(alert_data)),
+            "file_paths": self._extract_file_paths(str(alert_data)),
             "commands": self._extract_commands(str(alert_data)),
             "users": self._extract_users(alert_data),
             "processes": self._extract_processes(str(alert_data)),
