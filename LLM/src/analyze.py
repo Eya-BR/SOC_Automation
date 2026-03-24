@@ -131,28 +131,80 @@ Return JSON format:
 }}
 """
             
-            # Call the model LLM API
-            url = "http://100.92.111.23:1234/v1/chat/completions"
+            # Call the model LLM API - Local Ollama with Llama 3
+            url = "http://localhost:11434/api/generate"
             payload = {
-                "messages": [
-                    {"role": "system", "content": "You are a senior SOC analyst..."},
-                    {"role": "user", "content": context_prompt}
-                ],
-                "temperature": 0.7,
-                "max_tokens": 500,
-                "stream": False
+                "model": "llama3.2",
+                "prompt": context_prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.7,
+                    "top_p": 0.9,
+                    "max_tokens": 500
+                }
             }
             
             response = requests.post(url, json=payload, timeout=60)
             if response.status_code == 200:
-                return response.json()
+                result = response.json()
+                response_text = result.get("response", "")
+                return self._parse_llm_response(response_text)
             else:
-                logger.error(f"Model LLM API error: {response.status_code}")
-                return {}
+                logger.error(f"Ollama API error: {response.status_code}")
+                return self._get_fallback_analysis(alert_data)
                 
         except Exception as e:
-            logger.error(f"Error calling model LLM: {e}")
-            return {}
+            logger.error(f"Error calling Ollama: {e}")
+            return self._get_fallback_analysis(alert_data)
+    
+    def _parse_llm_response(self, response_text: str) -> Dict[str, Any]:
+        """Parse LLM response text into structured format"""
+        try:
+            # Try to extract JSON from response
+            import re
+            
+            # Look for JSON pattern in response
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                parsed = json.loads(json_str)
+                
+                # Ensure required fields
+                return {
+                    "hypothesis": parsed.get("hypothesis", "Activity detected"),
+                    "confidence": float(parsed.get("confidence", 0.5)),
+                    "severity": parsed.get("severity", "medium"),
+                    "recommendations": parsed.get("recommendations", self._get_fallback_recommendations({}))
+                }
+            else:
+                # Fallback: extract from text
+                return {
+                    "hypothesis": response_text[:200] + "..." if len(response_text) > 200 else response_text,
+                    "confidence": 0.5,
+                    "severity": "medium",
+                    "recommendations": self._get_fallback_recommendations({})
+                }
+                
+        except Exception as e:
+            logger.error(f"Error parsing LLM response: {e}")
+            return {
+                "hypothesis": "Analysis completed",
+                "confidence": 0.3,
+                "severity": "medium",
+                "recommendations": self._get_fallback_recommendations({})
+            }
+    
+    def _get_fallback_analysis(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Fallback analysis when LLM fails"""
+        user = alert_data.get("result", {}).get("user", "")
+        host = alert_data.get("result", {}).get("host", "")
+        
+        return {
+            "hypothesis": f"Security activity detected on host {host}",
+            "confidence": 0.3,
+            "severity": "medium",
+            "recommendations": self._get_fallback_recommendations(alert_data)
+        }
     
     def _get_fallback_recommendations(self, alert_data: Dict[str, Any]) -> Dict[str, List[str]]:
         """Get fallback recommendations when model LLM is unavailable"""
