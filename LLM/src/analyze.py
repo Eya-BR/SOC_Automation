@@ -88,7 +88,7 @@ class Analyzer:
             privilege = alert_data.get("result", {}).get("Privileges", "")
             alert_name = alert_data.get("search_name", "Unknown")
             
-            # Build context prompt for model - FIXED with count consideration
+            # Build context prompt for model - FIXED with better SOC logic
             context_prompt = f"""
 You are a senior SOC analyst analyzing a security alert.
 
@@ -104,22 +104,24 @@ Account Analysis:
 - Machine Account: {user.endswith("$")}
 - Domain Controller: {"DC" in host.upper() or "AD01" in host}
 - Administrator Account: {"admin" in user.lower() or "administrator" in user.lower()}
+- Internal IP: {self._is_private_ip(src_ip)}
 
-Threat Assessment:
-- Count of attempts: {count} (Consider if >1 indicates potential brute force or repeated access)
-- Source IP: {src_ip} (Check if internal or external)
-- Account type: {user} (High privilege accounts are more concerning)
+Critical Assessment:
+- Count of attempts: {count} ({"CRITICAL: Multiple logons - potential brute force or lateral movement" if int(count) > 1 else "Single logon - normal activity"})
+- IP Type: {"Internal network traffic" if self._is_private_ip(src_ip) else "External IP - higher suspicion"}
+- Account Type: {"High-privilege administrator account" if "admin" in user.lower() else "Standard user account"}
+- Host Type: {"Domain Controller - high-value target" if "DC" in host.upper() or "AD01" in host else "Standard server"}
 
-Provide contextual analysis and recommendations based on:
-1. Account type (machine vs human vs administrator)
-2. Host role (DC vs server)
-3. Attempt count (repeated attempts are more suspicious)
-4. Source IP location
-5. Alert type and potential impact
+SOC Analysis Guidelines:
+1. Be factual and specific - use actual values, not "unknown"
+2. Consider context: internal IPs are less suspicious than external
+3. Account for count: multiple logons = higher severity
+4. Recommendations should be proportional to threat level
+5. For medium alerts: verify and investigate, don't isolate immediately
 
-Return JSON format:
+Provide analysis in JSON format:
 {{
-    "hypothesis": "Clear statement about what occurred",
+    "hypothesis": "Specific factual description of what happened",
     "confidence": 0.0-1.0,
     "severity": "low|medium|high|critical",
     "recommendations": {{
@@ -156,6 +158,30 @@ Return JSON format:
         except Exception as e:
             logger.error(f"Error calling Ollama: {e}")
             return self._get_fallback_analysis(alert_data)
+    
+    def _is_private_ip(self, ip: str) -> bool:
+        """Check if IP is in private ranges"""
+        try:
+            import ipaddress
+            ip_obj = ipaddress.ip_address(ip)
+            return ip_obj.is_private
+        except:
+            # Fallback to basic string check if ipaddress module fails
+            if not ip or not isinstance(ip, str):
+                return False
+            
+            # Check private IP ranges manually
+            if ip.startswith("10."):
+                return True
+            elif ip.startswith("172."):
+                # Check 172.16.0.0 to 172.31.255.255
+                parts = ip.split(".")
+                if len(parts) == 4 and parts[1].isdigit():
+                    second_octet = int(parts[1])
+                    return 16 <= second_octet <= 31
+            elif ip.startswith("192.168."):
+                return True
+            return False
     
     def _parse_llm_response(self, response_text: str) -> Dict[str, Any]:
         """Parse LLM response text into structured format"""
