@@ -495,8 +495,9 @@ Generic security analysis...
     
     def _extract_ips(self, alert_data: Dict[str, Any]) -> List[str]:
         """Extract IP addresses"""
+        alert_text = str(alert_data).lower()
         ip_pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
-        matches = re.findall(ip_pattern, text)
+        matches = re.findall(ip_pattern, alert_text)
         valid_ips = []
         
         for ip in matches:
